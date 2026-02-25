@@ -214,9 +214,11 @@ write_manifest() {
   fi
 
   # Extract username from git remote URL (no network call — works offline)
+  # Handles both HTTPS (https://github.com/user/repo) and SSH (git@github.com:user/repo)
   local cached_user
   cached_user=$(cd "$BACKUP_DIR" && git remote get-url origin 2>/dev/null \
-    | sed 's|.*/\([^/]*\)/[^/]*$|\1|' || echo "unknown")
+    | sed 's|https://[^/]*/\([^/]*\)/.*|\1|; s|git@[^:]*:\([^/]*\)/.*|\1|' \
+    || echo "unknown")
 
   cat > "$BACKUP_DIR/manifest.json" <<MANIFEST
 {
@@ -848,3 +850,4 @@ Expected: `claude-backup v2.0.0`
 | 17 | `cmd_export_config` used `cp -R` for directories — same bypass risk as #15 | Blocker | Replaced with filtered per-file loop matching `sync_config` pattern |
 | 18 | Task 4 Step 2 line numbers (262, 333) will be stale after Tasks 1-3 insert ~120 lines | Warning | Removed line numbers; instruction now says "use these exact strings to locate the block" |
 | 19 | `sync_config` stdout contract undocumented (executors could misuse the function) | Warning | Added comment above function: `# stdout contract: prints a single integer — always capture with config_count=$(sync_config)` |
+| 20 | `write_manifest` sed regex requires 2 `/` separators — SSH remotes (`git@github.com:user/repo`) have only 1 and return the full URL as `cached_user` | Warning | Replaced single-branch sed with two-branch expression: HTTPS branch + SSH branch (`s\|git@[^:]*:\([^/]*\)/.*\|\1\|`) |
