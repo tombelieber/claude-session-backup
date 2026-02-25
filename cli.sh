@@ -374,7 +374,7 @@ cmd_status() {
   fi
 
   # Scheduler status
-  if launchctl list 2>/dev/null | grep -q "$PLIST_NAME"; then
+  if launchctl list "$PLIST_NAME" &>/dev/null; then
     printf "  ${BOLD}Scheduler:${NC}   ${GREEN}active${NC} (daily at 3:00 AM)\n"
   else
     printf "  ${BOLD}Scheduler:${NC}   ${YELLOW}inactive${NC}\n"
@@ -401,13 +401,17 @@ cmd_restore() {
     return 1
   fi
 
+  if [[ ! "$uuid" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+    fail "Invalid session identifier: $uuid"
+  fi
+
   if [ ! -d "$DEST_DIR" ]; then
     fail "No backups found. Run: claude-session-backup init"
   fi
 
   # Find matching .gz files
   local matches
-  matches=$(find "$DEST_DIR" -name "*${uuid}*" -type f 2>/dev/null)
+  matches=$(find "$DEST_DIR" -name "*${uuid}*.gz" -type f 2>/dev/null)
 
   if [ -z "$matches" ]; then
     fail "No backup found matching: $uuid"
