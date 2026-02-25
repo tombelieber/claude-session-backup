@@ -236,18 +236,21 @@ GITIGNORE
   printf "\n"
 }
 cmd_sync() {
-  # Prevent concurrent sync operations
-  local lock_file="$BACKUP_DIR/.sync.lock"
-  if [ -f "$lock_file" ]; then
+  # Prevent concurrent sync operations (atomic via mkdir)
+  local lock_dir="$BACKUP_DIR/.sync.lock"
+  if ! mkdir "$lock_dir" 2>/dev/null; then
     local lock_pid
-    lock_pid=$(cat "$lock_file" 2>/dev/null || echo "")
+    lock_pid=$(cat "$lock_dir/pid" 2>/dev/null || echo "")
     if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
       warn "Another sync is running (PID $lock_pid). Skipping."
       return 0
     fi
+    # Stale lock — previous process died
+    rm -rf "$lock_dir"
+    mkdir "$lock_dir"
   fi
-  echo $$ > "$lock_file"
-  trap 'rm -f "$lock_file"' EXIT
+  echo $$ > "$lock_dir/pid"
+  trap 'rm -rf "$lock_dir"' EXIT
 
   if [ ! -d "$BACKUP_DIR/.git" ]; then
     fail "Not initialized. Run: claude-backup init"
@@ -344,7 +347,7 @@ cmd_sync() {
   total_size=$(du -sh "$DEST_DIR" 2>/dev/null | cut -f1)
 
   step "Committing $file_count files ($total_size total)..."
-  git commit -q -m "backup $(date '+%Y-%m-%d %H:%M') — $file_count files, $total_size total"
+  git commit -q -m "backup $(date '+%Y-%m-%d %H:%M') — ${file_count} files, ${total_size} total"
   printf "${GREEN}✓${NC}\n"
 
   step "Pushing to GitHub..."
