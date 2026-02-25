@@ -213,6 +213,7 @@ cmd_init() {
 backup.log
 launchd-stdout.log
 launchd-stderr.log
+*.lock
 GITIGNORE
 
   info "Initialized at $BACKUP_DIR"
@@ -235,6 +236,19 @@ GITIGNORE
   printf "\n"
 }
 cmd_sync() {
+  # Prevent concurrent sync operations
+  local lock_file="$BACKUP_DIR/.sync.lock"
+  if [ -f "$lock_file" ]; then
+    local lock_pid
+    lock_pid=$(cat "$lock_file" 2>/dev/null || echo "")
+    if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+      warn "Another sync is running (PID $lock_pid). Skipping."
+      return 0
+    fi
+  fi
+  echo $$ > "$lock_file"
+  trap 'rm -f "$lock_file"' EXIT
+
   if [ ! -d "$BACKUP_DIR/.git" ]; then
     fail "Not initialized. Run: claude-session-backup init"
   fi
@@ -334,7 +348,12 @@ cmd_sync() {
   printf "${GREEN}✓${NC}\n"
 
   step "Pushing to GitHub..."
-  git push -u origin HEAD -q 2>/dev/null
+  if ! git push -u origin HEAD -q 2>&1; then
+    printf "${RED}FAILED${NC}\n"
+    warn "Push failed. Check your GitHub authentication and network."
+    log "Push failed"
+    return 1
+  fi
   printf "${GREEN}✓${NC}\n"
 
   log "Backup pushed successfully"
