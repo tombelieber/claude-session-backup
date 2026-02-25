@@ -202,7 +202,7 @@ cmd_init() {
   cd "$BACKUP_DIR"
 
   if [ ! -d ".git" ]; then
-    git init -q
+    git init -q -b main
     git remote add origin "https://github.com/$gh_user/$DATA_REPO_NAME.git"
   fi
 
@@ -291,17 +291,26 @@ cmd_sync() {
 
   done < <(find "$SOURCE_DIR" -mindepth 1 -maxdepth 1 -type d -print0)
 
-  # Remove deleted projects
+  # Remove deleted projects (with safety check)
   if [ -d "$DEST_DIR" ]; then
-    while IFS= read -r -d '' backup_project; do
-      local project_name
-      project_name=$(basename "$backup_project")
-      if [ ! -d "$SOURCE_DIR/$project_name" ]; then
-        log "Removing deleted project: $project_name"
-        rm -rf "$backup_project"
-        ((removed++)) || true
-      fi
-    done < <(find "$DEST_DIR" -mindepth 1 -maxdepth 1 -type d -print0)
+    local source_count backup_count
+    source_count=$(find "$SOURCE_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    backup_count=$(find "$DEST_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+
+    if [ "$backup_count" -gt 0 ] && [ "$source_count" -eq 0 ]; then
+      warn "Source directory appears empty — skipping removal to protect backups"
+      log "WARNING: source empty, skipping deletion pass"
+    else
+      while IFS= read -r -d '' backup_project; do
+        local project_name
+        project_name=$(basename "$backup_project")
+        if [ ! -d "$SOURCE_DIR/$project_name" ]; then
+          log "Removing deleted project: $project_name"
+          rm -rf "$backup_project"
+          ((removed++)) || true
+        fi
+      done < <(find "$DEST_DIR" -mindepth 1 -maxdepth 1 -type d -print0)
+    fi
   fi
 
   info "Compressed: $added, copied: $updated, removed: $removed"
@@ -325,7 +334,7 @@ cmd_sync() {
   printf "${GREEN}✓${NC}\n"
 
   step "Pushing to GitHub..."
-  git push -q 2>/dev/null
+  git push -u origin HEAD -q 2>/dev/null
   printf "${GREEN}✓${NC}\n"
 
   log "Backup pushed successfully"
