@@ -95,9 +95,145 @@ check_requirements() {
   fi
 }
 
+schedule_launchd() {
+  # Resolve absolute path to cli.sh (works whether run via npx or direct)
+  local cli_path
+  cli_path=$(command -v claude-session-backup 2>/dev/null || echo "")
+
+  # Fallback: if run directly (not via npm bin), use the backup dir's copy
+  if [ -z "$cli_path" ] || [ ! -f "$cli_path" ]; then
+    # Copy cli.sh into backup dir so launchd has a stable path
+    cp "${BASH_SOURCE[0]}" "$BACKUP_DIR/cli.sh"
+    chmod +x "$BACKUP_DIR/cli.sh"
+    cli_path="$BACKUP_DIR/cli.sh"
+  fi
+
+  mkdir -p "$(dirname "$PLIST_PATH")"
+
+  cat > "$PLIST_PATH" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$PLIST_NAME</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>$cli_path</string>
+        <string>sync</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>$BACKUP_DIR/launchd-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>$BACKUP_DIR/launchd-stderr.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    </dict>
+</dict>
+</plist>
+PLIST
+
+  launchctl unload "$PLIST_PATH" 2>/dev/null || true
+  launchctl load "$PLIST_PATH"
+}
+
 # --- Subcommand dispatch (placeholder — filled in next tasks) ---
 
-cmd_init() { echo "TODO: init"; }
+cmd_init() {
+  printf "\n${BOLD}Claude Session Backup${NC} v$VERSION\n\n"
+
+  # Check if already initialized
+  if [ -d "$BACKUP_DIR/.git" ]; then
+    info "Already initialized at $BACKUP_DIR"
+    local remote_url
+    remote_url=$(cd "$BACKUP_DIR" && git remote get-url origin 2>/dev/null || echo "unknown")
+    printf "  ${DIM}Remote: ${remote_url}${NC}\n"
+    printf "\n  Run ${BOLD}claude-session-backup sync${NC} to backup now.\n\n"
+    return 0
+  fi
+
+  # Check requirements
+  printf "${BOLD}Checking requirements...${NC}\n"
+  check_requirements
+  printf "\n"
+
+  # Check Claude sessions exist
+  if [ ! -d "$SOURCE_DIR" ]; then
+    fail "No Claude sessions found at $SOURCE_DIR"
+  fi
+
+  local session_count project_count
+  session_count=$(find "$SOURCE_DIR" -name "*.jsonl" 2>/dev/null | wc -l | tr -d ' ')
+  project_count=$(find "$SOURCE_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+  info "Found $session_count sessions across $project_count projects"
+  printf "\n"
+
+  # Get GitHub username
+  local gh_user
+  gh_user=$(gh api user --jq .login 2>/dev/null)
+
+  # Create private repo
+  printf "${BOLD}Creating private repo...${NC}\n"
+  step "github.com/$gh_user/$DATA_REPO_NAME"
+
+  if gh repo view "$gh_user/$DATA_REPO_NAME" &>/dev/null; then
+    printf "${YELLOW}exists${NC}\n"
+  else
+    gh repo create "$DATA_REPO_NAME" --private \
+      --description "Claude Code session backups (auto-generated)" \
+      >/dev/null 2>&1
+    printf "${GREEN}✓${NC}\n"
+  fi
+  printf "\n"
+
+  # Initialize local backup directory
+  printf "${BOLD}Setting up local backup...${NC}\n"
+  mkdir -p "$BACKUP_DIR"
+  cd "$BACKUP_DIR"
+
+  if [ ! -d ".git" ]; then
+    git init -q
+    git remote add origin "https://github.com/$gh_user/$DATA_REPO_NAME.git"
+  fi
+
+  mkdir -p "$DEST_DIR"
+
+  # Add .gitignore
+  cat > "$BACKUP_DIR/.gitignore" <<'GITIGNORE'
+backup.log
+launchd-stdout.log
+launchd-stderr.log
+GITIGNORE
+
+  info "Initialized at $BACKUP_DIR"
+  printf "\n"
+
+  # Run first backup
+  printf "${BOLD}Running first backup...${NC}\n"
+  cmd_sync
+
+  # Schedule daily backup (macOS only)
+  printf "\n${BOLD}Scheduling daily backup...${NC}\n"
+  schedule_launchd
+  info "Daily backup at 3:00 AM"
+
+  printf "\n${BOLD}${GREEN}All set!${NC} Your sessions are backed up.\n\n"
+  printf "  ${BOLD}Commands:${NC}\n"
+  printf "    claude-session-backup sync       Run backup now\n"
+  printf "    claude-session-backup status      Check last backup\n"
+  printf "    claude-session-backup restore ID  Restore a session\n"
+  printf "\n"
+}
 cmd_sync() {
   if [ ! -d "$BACKUP_DIR/.git" ]; then
     fail "Not initialized. Run: claude-session-backup init"
