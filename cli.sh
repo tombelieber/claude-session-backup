@@ -15,12 +15,12 @@ if [ -t 1 ]; then
   GREEN='\033[0;32m'
   RED='\033[0;31m'
   YELLOW='\033[1;33m'
-  BLUE='\033[0;34m'
+
   BOLD='\033[1m'
   DIM='\033[2m'
   NC='\033[0m'
 else
-  GREEN='' RED='' YELLOW='' BLUE='' BOLD='' DIM='' NC=''
+  GREEN='' RED='' YELLOW='' BOLD='' DIM='' NC=''
 fi
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE" 2>/dev/null || true; }
@@ -147,7 +147,7 @@ PLIST
   launchctl load "$PLIST_PATH"
 }
 
-# --- Subcommand dispatch (placeholder — filled in next tasks) ---
+# --- Subcommands ---
 
 cmd_init() {
   printf "\n${BOLD}Claude Backup${NC} v$VERSION\n\n"
