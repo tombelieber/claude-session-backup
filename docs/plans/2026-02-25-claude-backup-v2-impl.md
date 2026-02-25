@@ -145,30 +145,40 @@ git commit -m "feat: add sync_config function for config-tier backup"
 **Step 1: Add the `write_manifest` function**
 
 ```bash
+# Portable byte-count helper (macOS has no du -sb)
+dir_bytes() {
+  find "$1" -type f -exec stat -f %z {} + 2>/dev/null | awk '{s+=$1}END{print s+0}'
+}
+
 write_manifest() {
   local config_files=0 config_size=0
   local session_files=0 session_projects=0 session_size=0 session_uncompressed=0
 
   if [ -d "$CONFIG_DEST" ]; then
     config_files=$(find "$CONFIG_DEST" -type f 2>/dev/null | wc -l | tr -d ' ')
-    config_size=$(du -sb "$CONFIG_DEST" 2>/dev/null | cut -f1 || echo "0")
+    config_size=$(dir_bytes "$CONFIG_DEST")
   fi
 
   if [ -d "$DEST_DIR" ]; then
     session_files=$(find "$DEST_DIR" -name "*.gz" -type f 2>/dev/null | wc -l | tr -d ' ')
     session_projects=$(find "$DEST_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
-    session_size=$(du -sb "$DEST_DIR" 2>/dev/null | cut -f1 || echo "0")
+    session_size=$(dir_bytes "$DEST_DIR")
   fi
 
   if [ -d "$SOURCE_DIR" ]; then
-    session_uncompressed=$(du -sb "$SOURCE_DIR" 2>/dev/null | cut -f1 || echo "0")
+    session_uncompressed=$(dir_bytes "$SOURCE_DIR")
   fi
+
+  # Extract username from git remote URL (no network call — works offline)
+  local cached_user
+  cached_user=$(cd "$BACKUP_DIR" && git remote get-url origin 2>/dev/null \
+    | sed 's|.*/\([^/]*\)/[^/]*$|\1|' || echo "unknown")
 
   cat > "$BACKUP_DIR/manifest.json" <<MANIFEST
 {
   "version": "$VERSION",
   "machine": "$(hostname)",
-  "user": "$(gh api user --jq .login 2>/dev/null || echo "unknown")",
+  "user": "$cached_user",
   "lastSync": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
   "config": {
     "files": $config_files,
@@ -245,11 +255,20 @@ Wrap the existing session sync block (from `log "Starting backup..."` through `i
   fi
 ```
 
-**Step 3: Add manifest generation before the git commit**
+**Step 3: Add history.jsonl backup and manifest generation before the git commit**
 
 Before the `cd "$BACKUP_DIR"` / `git add -A` line, add:
 
 ```bash
+  # Backup history.jsonl (Tier 2)
+  if [ "$sync_sessions_tier" = true ] && [ -f "$CLAUDE_DIR/history.jsonl" ]; then
+    if [ ! -f "$BACKUP_DIR/history.jsonl.gz" ] || \
+       [ "$CLAUDE_DIR/history.jsonl" -nt "$BACKUP_DIR/history.jsonl.gz" ]; then
+      gzip -cn "$CLAUDE_DIR/history.jsonl" > "$BACKUP_DIR/history.jsonl.gz"
+      info "history.jsonl backed up"
+    fi
+  fi
+
   # Write manifest
   write_manifest
 ```
@@ -402,10 +421,20 @@ git commit -m "feat: add export-config command for portable config tarball"
 
 ```bash
 cmd_import_config() {
-  local input_file="${1:-}"
+  local input_file=""
+  local force=false
+
+  # Parse args
+  for arg in "$@"; do
+    case "$arg" in
+      --force) force=true ;;
+      *)       [ -z "$input_file" ] && input_file="$arg" ;;
+    esac
+  done
 
   if [ -z "$input_file" ]; then
-    printf "\n${BOLD}Usage:${NC} claude-backup import-config <file.tar.gz>\n\n"
+    printf "\n${BOLD}Usage:${NC} claude-backup import-config <file.tar.gz> [--force]\n\n"
+    printf "  ${DIM}--force  Overwrite existing files${NC}\n\n"
     return 1
   fi
 
@@ -413,7 +442,11 @@ cmd_import_config() {
     fail "File not found: $input_file"
   fi
 
-  printf "\n${BOLD}Importing Claude Code config...${NC}\n\n"
+  printf "\n${BOLD}Importing Claude Code config...${NC}\n"
+  if [ "$force" = true ]; then
+    printf "  ${YELLOW}Force mode: existing files will be overwritten${NC}\n"
+  fi
+  printf "\n"
 
   # Create temp dir for inspection
   local tmp_dir
@@ -433,12 +466,11 @@ cmd_import_config() {
 
     if [ -d "$src" ]; then
       mkdir -p "$dest"
-      # Copy files, but don't overwrite existing
       while IFS= read -r -d '' file; do
         local rel="${file#$src/}"
         local dest_file="$dest/$rel"
         mkdir -p "$(dirname "$dest_file")"
-        if [ -f "$dest_file" ]; then
+        if [ -f "$dest_file" ] && [ "$force" = false ]; then
           warn "Skipped (exists): $item/$rel"
         else
           cp "$file" "$dest_file"
@@ -449,7 +481,7 @@ cmd_import_config() {
       count=$(find "$src" -type f 2>/dev/null | wc -l | tr -d ' ')
       info "$item/ ($count files)"
     else
-      if [ -f "$dest" ]; then
+      if [ -f "$dest" ] && [ "$force" = false ]; then
         warn "Skipped (exists): $item"
       else
         mkdir -p "$(dirname "$dest")"
@@ -476,7 +508,7 @@ cmd_import_config() {
 **Step 2: Add case entry**
 
 ```bash
-  import-config) cmd_import_config "${2:-}" ;;
+  import-config) shift; cmd_import_config "$@" ;;
 ```
 
 **Step 3: Verify syntax**
@@ -593,33 +625,7 @@ git commit -m "feat: update init, status, help for v2 config backup"
 
 ---
 
-### Task 8: Update README.md
-
-**Files:**
-- Modify: `README.md`
-
-**Step 1: Rewrite README for v2**
-
-Update the README to document:
-- Two-tier backup explanation (config + sessions)
-- Updated command table with new commands
-- Machine migration section (export/import flow)
-- Updated storage layout table
-- What's backed up / what's excluded
-- Security section
-
-Keep it concise. See the design doc for content but don't copy verbatim — README should be user-facing, not design-doc-facing.
-
-**Step 2: Commit**
-
-```bash
-git add README.md
-git commit -m "docs: update README for v2 with config backup and migration"
-```
-
----
-
-### Task 9: Update package.json and .gitignore in backup dir
+### Task 8: Bump version and update .gitignore in backup dir
 
 **Files:**
 - Modify: `package.json` — bump version
@@ -654,6 +660,32 @@ git commit -m "chore: bump version to 2.0.0, update backup .gitignore"
 
 ---
 
+### Task 9: Update README.md
+
+**Files:**
+- Modify: `README.md`
+
+**Step 1: Rewrite README for v2**
+
+Update the README to document:
+- Two-tier backup explanation (config + sessions)
+- Updated command table with new commands
+- Machine migration section (export/import flow)
+- Updated storage layout table
+- What's backed up / what's excluded
+- Security section
+
+Keep it concise. See the design doc for content but don't copy verbatim — README should be user-facing, not design-doc-facing.
+
+**Step 2: Commit**
+
+```bash
+git add README.md
+git commit -m "docs: update README for v2 with config backup and migration"
+```
+
+---
+
 ### Task 10: End-to-end verification
 
 **No file changes — verification only.**
@@ -679,7 +711,17 @@ Verify:
 Run: `./cli.sh sync --config-only`
 Verify: Only config output, no session output.
 
-**Step 4: Verify export/import round-trip**
+**Step 4: Verify history.jsonl is backed up**
+
+Run: `ls -la ~/.claude-backup/history.jsonl.gz`
+Expected: File exists, is a gzip-compressed copy of `~/.claude/history.jsonl`
+
+**Step 5: Verify manifest.json is valid and works offline**
+
+Run: `cat ~/.claude-backup/manifest.json | python3 -m json.tool`
+Expected: Valid JSON with version, machine, user, config, sessions fields. User field is populated (extracted from git remote, no network call).
+
+**Step 6: Verify export/import round-trip**
 
 ```bash
 ./cli.sh export-config /tmp/test-export.tar.gz
@@ -687,7 +729,19 @@ tar -tzf /tmp/test-export.tar.gz  # verify contents, no credentials
 # Verify sensitive content warning if applicable
 ```
 
-**Step 5: Verify security exclusions**
+**Step 7: Verify import --force flag**
+
+```bash
+# Without --force: existing files should be skipped
+./cli.sh import-config /tmp/test-export.tar.gz
+# Expected: "Skipped (exists)" warnings for all files
+
+# With --force: existing files should be overwritten
+./cli.sh import-config /tmp/test-export.tar.gz --force
+# Expected: No skip warnings, files overwritten
+```
+
+**Step 8: Verify security exclusions**
 
 ```bash
 # Must NOT contain credentials
@@ -695,11 +749,12 @@ find ~/.claude-backup/ -name ".credentials.json" -o -name ".encryption_key" | wc
 # Expected: 0
 ```
 
-**Step 6: Verify --help shows all commands**
+**Step 9: Verify --help shows all commands**
 
 Run: `./cli.sh --help`
+Expected: Shows export-config, import-config (with --force note), sync flags
 
-**Step 7: Verify --version shows 2.0.0**
+**Step 10: Verify --version shows 2.0.0**
 
 Run: `./cli.sh --version`
 Expected: `claude-backup v2.0.0`
