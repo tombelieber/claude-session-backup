@@ -10,12 +10,42 @@
 
 ---
 
+## Rollback
+
+If anything goes wrong mid-implementation:
+
+```bash
+# Undo the last commit (keeps changes staged)
+git reset HEAD~1
+
+# Undo multiple commits back to last known-good state
+git log --oneline   # find the good commit hash
+git reset <hash>    # unstage all changes since that commit
+
+# Nuclear option: restore cli.sh to last commit
+git checkout HEAD -- cli.sh
+```
+
+If `~/.claude-backup/` is in a bad state from a failed sync test:
+
+```bash
+# Remove partial config backup (safe — source files untouched)
+rm -rf ~/.claude-backup/config/
+
+# Remove partial manifest
+rm -f ~/.claude-backup/manifest.json
+```
+
+---
+
 ### Task 1: Add config sync constants and security exclusion list
 
 **Files:**
-- Modify: `cli.sh:1-11` (constants block)
+- Modify: `cli.sh:3-11` (constants block — lines 1-2 are shebang/set, do NOT touch them)
 
-**Step 1: Add new constants after existing ones (line 11)**
+**Step 1: Replace lines 3–11 only** (leave lines 1–2 intact: `#!/usr/bin/env bash` and `set -euo pipefail`)
+
+The full replacement for lines 3–11:
 
 ```bash
 VERSION="2.0.0"
@@ -68,9 +98,10 @@ git commit -m "feat: add v2 constants, config items list, security exclusions"
 
 **Step 1: Add the `sync_config` function**
 
-Insert before the `cmd_sync()` line:
+Insert before the `cmd_sync()` line at `cli.sh:238`:
 
 ```bash
+# stdout contract: prints a single integer (count of files synced) — always capture with config_count=$(sync_config)
 sync_config() {
   local config_added=0
 
@@ -82,7 +113,7 @@ sync_config() {
     # Skip if source doesn't exist
     [ -e "$src" ] || continue
 
-    # Security check: skip sensitive files
+    # Top-level security check: skip sensitive top-level items
     local skip=false
     for pattern in "${SENSITIVE_PATTERNS[@]}"; do
       if [[ "$item" == *"$pattern"* ]]; then
@@ -101,6 +132,19 @@ sync_config() {
         local rel="${file#$src/}"
         local dest_file="$dest/$rel"
         mkdir -p "$(dirname "$dest_file")"
+
+        # Per-file sensitive check: a file inside agents/ or skills/ could be named .credentials.json
+        local file_basename
+        file_basename=$(basename "$file")
+        local file_skip=false
+        for pattern in "${SENSITIVE_PATTERNS[@]}"; do
+          if [[ "$file_basename" == *"$pattern"* ]]; then
+            file_skip=true
+            break
+          fi
+        done
+        [ "$file_skip" = true ] && continue
+
         if [ ! -f "$dest_file" ] || [ "$file" -nt "$dest_file" ]; then
           cp "$file" "$dest_file"
           ((config_added++)) || true
@@ -247,7 +291,7 @@ After the lock/init checks and before `log "Starting backup..."`, add:
   fi
 ```
 
-Wrap the existing session sync block (from `log "Starting backup..."` through `info "Compressed: $added..."`) inside:
+Wrap the existing session sync block (from `log "Starting backup..."` through `info "Compressed: $added, copied: $updated, removed: $removed"` — **do not rely on line numbers here; use these exact strings to locate the block, as Tasks 1-3 will have shifted them by ~120 lines**) inside:
 
 ```bash
   if [ "$sync_sessions_tier" = true ]; then
@@ -339,8 +383,22 @@ cmd_export_config() {
     [ -e "$src" ] || continue
 
     if [ -d "$src" ]; then
-      mkdir -p "$tmp_dir/$item"
-      cp -R "$src/." "$tmp_dir/$item/"
+      # Use filtered per-file copy (same logic as sync_config) — cp -R would bypass sensitive-file checks
+      while IFS= read -r -d '' file; do
+        local file_basename
+        file_basename=$(basename "$file")
+        local file_skip=false
+        for pattern in "${SENSITIVE_PATTERNS[@]}"; do
+          if [[ "$file_basename" == *"$pattern"* ]]; then
+            file_skip=true
+            break
+          fi
+        done
+        [ "$file_skip" = true ] && continue
+        local rel="${file#$src/}"
+        mkdir -p "$tmp_dir/$item/$(dirname "$rel")"
+        cp "$file" "$tmp_dir/$item/$rel"
+      done < <(find "$src" -type f -print0 2>/dev/null)
     else
       cp "$src" "$tmp_dir/$item"
     fi
@@ -455,6 +513,15 @@ cmd_import_config() {
 
   tar -xzf "$input_file" -C "$tmp_dir"
 
+  # Security check BEFORE copying anything: abort if archive contains sensitive files (including nested)
+  for pattern in "${SENSITIVE_PATTERNS[@]}"; do
+    local basename_pattern
+    basename_pattern=$(basename "$pattern")
+    if find "$tmp_dir" -name "$basename_pattern" -print -quit 2>/dev/null | grep -q .; then
+      fail "Archive contains sensitive file matching '$basename_pattern' — import aborted. Inspect with: tar -tzf $input_file"
+    fi
+  done
+
   local imported=0
 
   # Import each config item
@@ -492,13 +559,6 @@ cmd_import_config() {
     fi
   done
 
-  # Safety: verify no credentials were imported
-  for pattern in "${SENSITIVE_PATTERNS[@]}"; do
-    if [ -f "$tmp_dir/$pattern" ]; then
-      warn "Ignored sensitive file in archive: $pattern"
-    fi
-  done
-
   printf "\n${GREEN}${BOLD}Done!${NC} Imported $imported files.\n"
   printf "${DIM}Restart Claude Code to apply settings.${NC}\n"
   printf "${DIM}Note: Plugins will be downloaded on first launch.${NC}\n\n"
@@ -510,6 +570,8 @@ cmd_import_config() {
 ```bash
   import-config) shift; cmd_import_config "$@" ;;
 ```
+
+> **Note on shift pattern:** `export-config` (Task 5) does NOT use `shift` — it passes `${2:-}` directly because `cmd_export_config` takes a single optional positional arg. `import-config` uses `shift; "$@"` because `cmd_import_config` takes variadic args (`--force`, filename in any order). Do NOT "fix" export-config to match this pattern.
 
 **Step 3: Verify syntax**
 
@@ -540,7 +602,7 @@ git commit -m "feat: add import-config command for machine migration"
 
 **Step 1: Update `cmd_init`**
 
-In `cmd_init`, after "Running first backup..." and before scheduling, the existing `cmd_sync` call will now automatically include config. Update the success message at the end:
+In `cmd_init`, find and replace the success message block starting at `printf "\n${BOLD}${GREEN}All set!${NC} Your sessions are backed up.\n\n"` (current line ~231) with:
 
 ```bash
   printf "\n${BOLD}${GREEN}All set!${NC} Your Claude Code environment is backed up.\n\n"
@@ -675,7 +737,7 @@ Update the README to document:
 - What's backed up / what's excluded
 - Security section
 
-Keep it concise. See the design doc for content but don't copy verbatim — README should be user-facing, not design-doc-facing.
+Keep it concise. Reference the design doc at `docs/plans/2026-02-25-claude-backup-v2-design.md` for content but don't copy verbatim — README should be user-facing, not design-doc-facing.
 
 **Step 2: Commit**
 
@@ -690,10 +752,12 @@ git commit -m "docs: update README for v2 with config backup and migration"
 
 **No file changes — verification only.**
 
-**Step 1: Verify full init flow (if not already initialized)**
+**Step 1: Check current state**
 
 Run: `./cli.sh status`
-Verify: Shows config, sessions, scheduler status, manifest info.
+
+If already initialized (shows existing backup info): proceed to Step 2.
+If not initialized (fails with "Not initialized"): run `./cli.sh init` first, then continue from Step 2.
 
 **Step 2: Verify sync with both tiers**
 
@@ -758,3 +822,29 @@ Expected: Shows export-config, import-config (with --force note), sync flags
 
 Run: `./cli.sh --version`
 Expected: `claude-backup v2.0.0`
+
+---
+
+## Changelog of Fixes Applied (Audit → Final Plan)
+
+| # | Issue | Severity | Fix Applied |
+|---|-------|----------|-------------|
+| 1 | `du -sb` doesn't exist on macOS | Blocker | Replaced with portable `dir_bytes()` helper using `stat -f %z + awk` |
+| 2 | `gh api user` network call on every sync (fails offline) | Blocker | Replaced with git remote URL parse — zero network calls |
+| 3 | `history.jsonl` in design doc but missing from implementation | Blocker | Added gzip backup of `~/.claude/history.jsonl` in session sync block |
+| 4 | Task 1 replacement block omits `#!/usr/bin/env bash` and `set -euo pipefail` | Blocker | Clarified instruction: replace lines 3–11 only, leave lines 1–2 intact |
+| 5 | Task 4 anchor `info "Compressed: $added..."` doesn't exist verbatim | Blocker | Fixed to exact string: `info "Compressed: $added, copied: $updated, removed: $removed"` at line 333 |
+| 6 | No rollback/recovery procedure | Blocker | Added Rollback section before Task 1 |
+| 7 | `import-config` had no override option for existing files | Warning | Added `--force` flag to `cmd_import_config` |
+| 8 | Task 4 Step 2 line references were paraphrased | Warning | Added exact line numbers (262, 333) |
+| 9 | Task 10 Step 1 "if not already initialized" was ambiguous | Warning | Clarified both branches (initialized vs not) |
+| 10 | Task 7 Step 1 didn't specify what string to replace | Warning | Added exact current string to find and replace |
+| 11 | Task 9 referenced "the design doc" without a path | Minor | Added explicit path: `docs/plans/2026-02-25-claude-backup-v2-design.md` |
+| 12 | Task 2 insertion point had no line number | Minor | Added `cli.sh:238` |
+| 13 | Task 5/6 inconsistent shift pattern unexplained | Minor | Added explicit note explaining why export-config must NOT use shift |
+| 14 | Tasks 8 and 9 were in wrong order (README before version bump) | Minor | Swapped: version bump is now Task 8, README is Task 9 |
+| 15 | `sync_config` directory branch used no per-file basename check — a `.credentials.json` nested inside `agents/` or `skills/` would bypass SENSITIVE_PATTERNS | Blocker | Added per-file basename check inside the `while IFS= read` loop before each `cp` |
+| 16 | `cmd_import_config` security check fired AFTER files copied to disk; only checked top-level `$tmp_dir/$pattern`; said "Ignored" but file was already written | Blocker | Moved check immediately after `tar -xzf`, before any copying; uses `find "$tmp_dir" -name "$basename_pattern"` for nested detection; uses `fail` (abort) not `warn`; removed stale post-import check |
+| 17 | `cmd_export_config` used `cp -R` for directories — same bypass risk as #15 | Blocker | Replaced with filtered per-file loop matching `sync_config` pattern |
+| 18 | Task 4 Step 2 line numbers (262, 333) will be stale after Tasks 1-3 insert ~120 lines | Warning | Removed line numbers; instruction now says "use these exact strings to locate the block" |
+| 19 | `sync_config` stdout contract undocumented (executors could misuse the function) | Warning | Added comment above function: `# stdout contract: prints a single integer — always capture with config_count=$(sync_config)` |
