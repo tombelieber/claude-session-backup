@@ -6,9 +6,9 @@ BACKUP_DIR="$HOME/.claude-backup"
 SOURCE_DIR="$HOME/.claude/projects"
 DEST_DIR="$BACKUP_DIR/projects"
 LOG_FILE="$BACKUP_DIR/backup.log"
-PLIST_NAME="com.claude-session-backup.plist"
+PLIST_NAME="com.claude-backup.plist"
 PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_NAME"
-DATA_REPO_NAME="claude-sessions-backup"
+DATA_REPO_NAME="claude-backup-data"
 
 # Colors (if terminal supports it)
 if [ -t 1 ]; then
@@ -31,25 +31,25 @@ step() { printf "  ${DIM}%s${NC} " "$*"; }
 
 show_help() {
   cat <<EOF
-${BOLD}Claude Session Backup${NC} v$VERSION
+${BOLD}Claude Backup${NC} v$VERSION
 
 Back up your Claude Code chat sessions to a private GitHub repo.
 
 ${BOLD}Usage:${NC}
-  claude-session-backup              Interactive first-time setup
-  claude-session-backup init         Same as above
-  claude-session-backup sync         Run backup now
-  claude-session-backup status       Show backup status
-  claude-session-backup restore ID   Restore a session by UUID
-  claude-session-backup uninstall    Remove scheduler and optionally data
-  claude-session-backup --help       Show this help
-  claude-session-backup --version    Show version
+  claude-backup              Interactive first-time setup
+  claude-backup init         Same as above
+  claude-backup sync         Run backup now
+  claude-backup status       Show backup status
+  claude-backup restore ID   Restore a session by UUID
+  claude-backup uninstall    Remove scheduler and optionally data
+  claude-backup --help       Show this help
+  claude-backup --version    Show version
 
 ${BOLD}Requirements:${NC}
   git, gh (GitHub CLI, authenticated), gzip, macOS
 
 ${BOLD}More info:${NC}
-  https://github.com/tombelieber/claude-session-backup
+  https://github.com/tombelieber/claude-backup
 EOF
 }
 
@@ -98,7 +98,7 @@ check_requirements() {
 schedule_launchd() {
   # Resolve absolute path to cli.sh (works whether run via npx or direct)
   local cli_path
-  cli_path=$(command -v claude-session-backup 2>/dev/null || echo "")
+  cli_path=$(command -v claude-backup 2>/dev/null || echo "")
 
   # Fallback: if run directly (not via npm bin), use the backup dir's copy
   if [ -z "$cli_path" ] || [ ! -f "$cli_path" ]; then
@@ -150,7 +150,7 @@ PLIST
 # --- Subcommand dispatch (placeholder — filled in next tasks) ---
 
 cmd_init() {
-  printf "\n${BOLD}Claude Session Backup${NC} v$VERSION\n\n"
+  printf "\n${BOLD}Claude Backup${NC} v$VERSION\n\n"
 
   # Check if already initialized
   if [ -d "$BACKUP_DIR/.git" ]; then
@@ -158,7 +158,7 @@ cmd_init() {
     local remote_url
     remote_url=$(cd "$BACKUP_DIR" && git remote get-url origin 2>/dev/null || echo "unknown")
     printf "  ${DIM}Remote: ${remote_url}${NC}\n"
-    printf "\n  Run ${BOLD}claude-session-backup sync${NC} to backup now.\n\n"
+    printf "\n  Run ${BOLD}claude-backup sync${NC} to backup now.\n\n"
     return 0
   fi
 
@@ -230,9 +230,9 @@ GITIGNORE
 
   printf "\n${BOLD}${GREEN}All set!${NC} Your sessions are backed up.\n\n"
   printf "  ${BOLD}Commands:${NC}\n"
-  printf "    claude-session-backup sync       Run backup now\n"
-  printf "    claude-session-backup status      Check last backup\n"
-  printf "    claude-session-backup restore ID  Restore a session\n"
+  printf "    claude-backup sync       Run backup now\n"
+  printf "    claude-backup status      Check last backup\n"
+  printf "    claude-backup restore ID  Restore a session\n"
   printf "\n"
 }
 cmd_sync() {
@@ -250,7 +250,7 @@ cmd_sync() {
   trap 'rm -f "$lock_file"' EXIT
 
   if [ ! -d "$BACKUP_DIR/.git" ]; then
-    fail "Not initialized. Run: claude-session-backup init"
+    fail "Not initialized. Run: claude-backup init"
   fi
   if [ ! -d "$SOURCE_DIR" ]; then
     fail "Claude sessions directory not found: $SOURCE_DIR"
@@ -360,10 +360,10 @@ cmd_sync() {
   printf "\n${GREEN}${BOLD}Done!${NC} Backup complete.\n"
 }
 cmd_status() {
-  printf "\n${BOLD}Claude Session Backup${NC} v$VERSION\n\n"
+  printf "\n${BOLD}Claude Backup${NC} v$VERSION\n\n"
 
   if [ ! -d "$BACKUP_DIR/.git" ]; then
-    fail "Not initialized. Run: claude-session-backup init"
+    fail "Not initialized. Run: claude-backup init"
   fi
 
   # Remote URL
@@ -414,7 +414,7 @@ cmd_restore() {
   local uuid="${1:-}"
 
   if [ -z "$uuid" ]; then
-    printf "\n${BOLD}Usage:${NC} claude-session-backup restore <session-uuid>\n\n"
+    printf "\n${BOLD}Usage:${NC} claude-backup restore <session-uuid>\n\n"
     printf "  Find session UUIDs with:\n"
     printf "    ls ~/.claude-backup/projects/*/\n\n"
     return 1
@@ -425,7 +425,7 @@ cmd_restore() {
   fi
 
   if [ ! -d "$DEST_DIR" ]; then
-    fail "No backups found. Run: claude-session-backup init"
+    fail "No backups found. Run: claude-backup init"
   fi
 
   # Find matching .gz files
@@ -471,7 +471,7 @@ cmd_restore() {
   printf "\n"
 }
 cmd_uninstall() {
-  printf "\n${BOLD}Uninstalling Claude Session Backup${NC}\n\n"
+  printf "\n${BOLD}Uninstalling Claude Backup${NC}\n\n"
 
   # Remove launchd schedule
   if [ -f "$PLIST_PATH" ]; then
@@ -506,6 +506,6 @@ case "${1:-}" in
   restore)       cmd_restore "${2:-}" ;;
   uninstall)     cmd_uninstall ;;
   --help|-h)     show_help ;;
-  --version|-v)  echo "claude-session-backup v$VERSION" ;;
+  --version|-v)  echo "claude-backup v$VERSION" ;;
   *)             echo "Unknown command: $1"; show_help; exit 1 ;;
 esac
