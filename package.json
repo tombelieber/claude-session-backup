@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Back up your Claude Code chat sessions to GitHub",
   "bin": {
-    "claude-backup": "./cli.sh"
+    "claude-backup": "cli.sh"
   },
   "files": [
     "cli.sh",
@@ -19,7 +19,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/tombelieber/claude-backup.git"
+    "url": "git+https://github.com/tombelieber/claude-backup.git"
   },
   "author": "tombelieber",
   "license": "MIT",
