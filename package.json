@@ -1,0 +1,29 @@
+{
+  "name": "claude-session-backup",
+  "version": "1.0.0",
+  "description": "Back up your Claude Code chat sessions to GitHub",
+  "bin": {
+    "claude-session-backup": "./cli.sh"
+  },
+  "files": [
+    "cli.sh",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "backup",
+    "sessions",
+    "chat-history"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tombelieber/claude-session-backup.git"
+  },
+  "author": "tombelieber",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16"
+  }
+}
