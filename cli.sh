@@ -237,6 +237,9 @@ backup.log
 launchd-stdout.log
 launchd-stderr.log
 *.lock
+*.tmp
+.sync.lock/
+cli.sh
 GITIGNORE
 
   info "Initialized at $BACKUP_DIR"
