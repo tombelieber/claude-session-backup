@@ -283,7 +283,10 @@ cmd_init() {
     fi
   fi
 
-  mkdir -p "$DEST_DIR"
+  # Create machine-namespaced directory structure (v3.2)
+  local init_slug=$(machine_slug)
+  mkdir -p "$BACKUP_DIR/machines/$init_slug/projects"
+  DEST_DIR="$BACKUP_DIR/machines/$init_slug/projects"
 
   # Add .gitignore
   cat > "$BACKUP_DIR/.gitignore" <<'GITIGNORE'
@@ -420,7 +423,55 @@ get_machine_slug() {
   fi
 }
 
+# Returns the machine-namespaced DEST_DIR. Call once at the start of commands that use DEST_DIR.
+# If machines/ directory exists (v3.2+), use it. Otherwise fall back to flat projects/ (v3.0 compat).
+resolve_dest_dir() {
+  if [ -d "$BACKUP_DIR/machines" ]; then
+    DEST_DIR="$BACKUP_DIR/machines/$(get_machine_slug)/projects"
+  fi
+  # else: keep default DEST_DIR="$BACKUP_DIR/projects" (v3.0 flat layout)
+}
+
+# Migrates v3.0 flat projects/ to v3.2 machine-namespaced machines/<slug>/projects/
+# Called at the beginning of cmd_sync() before any backup operations.
+migrate_to_namespaced() {
+  if [ -d "$BACKUP_DIR/projects" ] && [ ! -d "$BACKUP_DIR/machines" ]; then
+    local slug
+    # Must call machine_slug() directly — machineSlug not yet in manifest at migration time.
+    slug=$(machine_slug)
+
+    # 1. Create machine directory
+    mkdir -p "$BACKUP_DIR/machines/$slug"
+
+    # 2. Move projects into machine namespace
+    mv "$BACKUP_DIR/projects" "$BACKUP_DIR/machines/$slug/projects"
+
+    # 3. Persist slug immediately so get_machine_slug() can read it on next sync.
+    python3 -c "
+import json, sys
+path = sys.argv[1]
+slug = sys.argv[2]
+m = json.load(open(path))
+m['machineSlug'] = slug
+json.dump(m, open(path, 'w'), indent=2)
+" "$BACKUP_DIR/manifest.json" "$slug"
+
+    # 4. Update DEST_DIR for the rest of this sync
+    DEST_DIR="$BACKUP_DIR/machines/$slug/projects"
+
+    # 5. Commit the migration
+    cd "$BACKUP_DIR"
+    git add -A
+    git commit -q -m "migrate: namespace projects under machines/$slug"
+
+    log "Migrated to machine-namespaced layout: machines/$slug/"
+    info "Migrated backup layout to machine-namespaced directories"
+  fi
+}
+
 write_manifest() {
+  resolve_dest_dir
+
   local config_files=0 config_size=0
   local session_files=0 session_projects=0 session_size=0 session_uncompressed=0
 
@@ -439,10 +490,8 @@ write_manifest() {
     session_uncompressed=$(dir_bytes "$SOURCE_DIR")
   fi
 
-  # Resolve mode: BACKUP_MODE env (set during init) > existing manifest > "github" default
   local mode="${BACKUP_MODE:-$(read_backup_mode)}"
 
-  # Extract username from git remote URL (no network call — works offline)
   local cached_user="local"
   if [ "$mode" != "local" ]; then
     cached_user=$(cd "$BACKUP_DIR" && git remote get-url origin 2>/dev/null \
@@ -451,13 +500,21 @@ write_manifest() {
       || echo "unknown")
   fi
 
-  cat > "$BACKUP_DIR/manifest.json" <<MANIFEST
+  local slug=$(get_machine_slug)
+  local last_sync=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  local machine_name=$(json_escape "$(hostname)")
+
+  # Per-machine manifest (source of truth for this machine)
+  if [ -d "$BACKUP_DIR/machines" ]; then
+    mkdir -p "$BACKUP_DIR/machines/$slug"
+    cat > "$BACKUP_DIR/machines/$slug/manifest.json" <<MANIFEST
 {
   "version": "$VERSION",
   "mode": "$mode",
-  "machine": "$(json_escape "$(hostname)")",
+  "machine": "$machine_name",
+  "machineSlug": "$slug",
   "user": "$cached_user",
-  "lastSync": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
+  "lastSync": "$last_sync",
   "config": {
     "files": $config_files,
     "sizeBytes": $config_size
@@ -470,10 +527,60 @@ write_manifest() {
   }
 }
 MANIFEST
+  fi
+
+  # Build machines array by scanning all per-machine manifests
+  local machines_array="[]"
+  if [ -d "$BACKUP_DIR/machines" ]; then
+    machines_array=$(python3 -c "
+import json, sys, glob, os
+
+machines_dir = sys.argv[1]
+entries = []
+for mf in sorted(glob.glob(os.path.join(machines_dir, '*/manifest.json'))):
+    try:
+        m = json.load(open(mf))
+        slug = os.path.basename(os.path.dirname(mf))
+        entries.append({
+            'slug': slug,
+            'machine': m.get('machine', ''),
+            'lastSync': m.get('lastSync', ''),
+            'sessionCount': m.get('sessions', {}).get('files', 0),
+            'backupSizeBytes': m.get('sessions', {}).get('sizeBytes', 0)
+        })
+    except (json.JSONDecodeError, IOError):
+        pass
+print(json.dumps(entries))
+" "$BACKUP_DIR/machines" 2>/dev/null || echo "[]")
+  fi
+
+  # Root manifest (backward-compatible: current-machine fields at top level + machines array)
+  cat > "$BACKUP_DIR/manifest.json" <<MANIFEST
+{
+  "version": "$VERSION",
+  "mode": "$mode",
+  "machine": "$machine_name",
+  "machineSlug": "$slug",
+  "user": "$cached_user",
+  "lastSync": "$last_sync",
+  "config": {
+    "files": $config_files,
+    "sizeBytes": $config_size
+  },
+  "sessions": {
+    "files": $session_files,
+    "projects": $session_projects,
+    "sizeBytes": $session_size,
+    "uncompressedBytes": $session_uncompressed
+  },
+  "machines": $machines_array
+}
+MANIFEST
 }
 
 build_session_index() {
-  # Scans ~/.claude-backup/projects/ and writes session-index.json.
+  resolve_dest_dir
+  # Scans session projects dir and writes session-index.json.
   # One entry per *.jsonl.gz file. Sorted newest-first by backedUpAt.
   # v4: also scan *.jsonl.age.gz when encryption is added.
   local index_file="$BACKUP_DIR/session-index.json"
@@ -586,6 +693,10 @@ cmd_sync() {
   if [ ! -d "$BACKUP_DIR/.git" ]; then
     fail "Not initialized. Run: claude-backup init"
   fi
+
+  # v3.2 migration: move flat projects/ to machine-namespaced machines/<slug>/projects/
+  migrate_to_namespaced
+  resolve_dest_dir
 
   # v3 migration: ensure session-index.json is gitignored (existing installs)
   local gi="$BACKUP_DIR/.gitignore"
@@ -754,6 +865,7 @@ cmd_sync() {
   fi
 }
 cmd_status() {
+  resolve_dest_dir
   local mode
   mode=$(read_backup_mode)
 
@@ -835,6 +947,7 @@ cmd_status() {
 }
 
 cmd_status_json() {
+  resolve_dest_dir
   local mode="$1"
 
   if [ ! -d "$BACKUP_DIR/.git" ]; then
@@ -891,6 +1004,7 @@ cmd_status_json() {
 }
 
 cmd_restore() {
+  resolve_dest_dir
   local mode="uuid"
   local uuid=""
   local last_n=10
@@ -1048,6 +1162,7 @@ cmd_restore() {
   fi
 }
 cmd_peek() {
+  resolve_dest_dir
   local uuid="${1:-}"
 
   if [ -z "$uuid" ]; then
