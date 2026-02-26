@@ -1027,6 +1027,59 @@ cmd_status_json() {
     "$scheduler" "$index_sessions"
 }
 
+cmd_restore_all() {
+  local source_machine="${1:-}"
+  local force="${2:-false}"
+
+  # Determine search path
+  local search_path="$BACKUP_DIR/machines"
+  if [ -n "$source_machine" ]; then
+    search_path="$BACKUP_DIR/machines/$source_machine"
+    if [ ! -d "$search_path" ]; then
+      fail "No backups found for machine: $source_machine"
+    fi
+  fi
+
+  # Fallback for v3.0 flat layout
+  if [ ! -d "$BACKUP_DIR/machines" ]; then
+    search_path="$DEST_DIR"
+  fi
+
+  if [ ! -d "$search_path" ]; then
+    fail "No backups found. Run: claude-backup sync"
+  fi
+
+  local restored=0 skipped=0 failed=0
+
+  while IFS= read -r -d '' gz_file; do
+    local filename project_dir
+    filename=$(basename "$gz_file" .gz)
+    project_dir=$(basename "$(dirname "$gz_file")")
+
+    local target_dir="$SOURCE_DIR/$project_dir"
+    local target_file="$target_dir/$filename"
+
+    # Skip if file exists and --force not set
+    if [ -f "$target_file" ] && [ "$force" != true ]; then
+      ((skipped++)) || true
+      continue
+    fi
+
+    mkdir -p "$target_dir"
+    if gzip -dkc "$gz_file" > "$target_file"; then
+      ((restored++)) || true
+    else
+      ((failed++)) || true
+    fi
+  done < <(find "$search_path" -name "*.jsonl.gz" -type f -print0 2>/dev/null)
+
+  info "Restore complete: $restored restored, $skipped skipped (already exist), $failed failed"
+
+  if [ "$JSON_OUTPUT" = true ]; then
+    printf '{"ok":true,"restored":%d,"skipped":%d,"failed":%d}\n' "$restored" "$skipped" "$failed"
+  fi
+}
+
 cmd_restore() {
   resolve_dest_dir
   local mode="uuid"
@@ -1034,6 +1087,7 @@ cmd_restore() {
   local last_n=10
   local filter_date=""
   local filter_project=""
+  local filter_machine=""
   local force=false
 
   # Parse args — supports both "--last 10" (two args) and UUID with optional --force
@@ -1052,13 +1106,22 @@ cmd_restore() {
       --project) mode="project"; ((i++)) || true; filter_project="${args[$i]:-}"
                  [ -z "$filter_project" ] && fail "Missing value for --project"
                  [[ "$filter_project" == --* ]] && fail "Missing value for --project" ;;
+      --all)     mode="all" ;;
+      --machine) ((i++)) || true; filter_machine="${args[$i]:-}"
+                 [ -z "$filter_machine" ] && fail "Missing value for --machine" ;;
       *)         [ "$mode" = "uuid" ] && uuid="${args[$i]}" ;;
     esac
     ((i++)) || true
   done
 
-  if [ ! -d "$DEST_DIR" ] && [ ! -d "$BACKUP_DIR/machines" ]; then
+  if [ "$mode" != "all" ] && [ ! -d "$DEST_DIR" ] && [ ! -d "$BACKUP_DIR/machines" ]; then
     fail "No backups found. Run: claude-backup sync"
+  fi
+
+  # ── Restore-all mode ──────────────────────────────────────────────────────────
+  if [ "$mode" = "all" ]; then
+    cmd_restore_all "$filter_machine" "$force"
+    return $?
   fi
 
   # ── Listing modes ────────────────────────────────────────────────────────────
