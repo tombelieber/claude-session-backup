@@ -369,6 +369,17 @@ MANIFEST
 }
 
 cmd_sync() {
+  local sync_config_tier=true
+  local sync_sessions_tier=true
+
+  # Parse flags
+  for arg in "$@"; do
+    case "$arg" in
+      --config-only)  sync_sessions_tier=false ;;
+      --sessions-only) sync_config_tier=false ;;
+    esac
+  done
+
   # Prevent concurrent sync operations (atomic via mkdir)
   local lock_dir="$BACKUP_DIR/.sync.lock"
   if ! mkdir "$lock_dir" 2>/dev/null; then
@@ -392,79 +403,102 @@ cmd_sync() {
     fail "Claude sessions directory not found: $SOURCE_DIR"
   fi
 
-  log "Starting backup..."
-  printf "\n${BOLD}Syncing Claude sessions...${NC}\n\n"
+  local config_count=0
 
-  local added=0 updated=0 removed=0
-  local total_sessions=0 total_projects=0
+  # Tier 1: Config backup
+  if [ "$sync_config_tier" = true ]; then
+    printf "\n${BOLD}Backing up config profile...${NC}\n"
+    config_count=$(sync_config)
+    info "Config: $config_count files synced"
+  fi
 
-  # Count totals for progress
-  total_projects=$(find "$SOURCE_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
-  total_sessions=$(find "$SOURCE_DIR" -name "*.jsonl" 2>/dev/null | wc -l | tr -d ' ')
-  step "Found $total_sessions sessions across $total_projects projects"
-  printf "\n"
+  if [ "$sync_sessions_tier" = true ]; then
+    log "Starting backup..."
+    printf "\n${BOLD}Syncing Claude sessions...${NC}\n\n"
 
-  # Sync each project directory
-  while IFS= read -r -d '' project_dir; do
-    local project_name
-    project_name=$(basename "$project_dir")
-    local dest_project="$DEST_DIR/$project_name"
-    mkdir -p "$dest_project"
+    local added=0 updated=0 removed=0
+    local total_sessions=0 total_projects=0
 
-    # Compress JSONL files
-    while IFS= read -r -d '' jsonl_file; do
-      local filename gz_dest
-      filename=$(basename "$jsonl_file")
-      gz_dest="$dest_project/${filename}.gz"
+    # Count totals for progress
+    total_projects=$(find "$SOURCE_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    total_sessions=$(find "$SOURCE_DIR" -name "*.jsonl" 2>/dev/null | wc -l | tr -d ' ')
+    step "Found $total_sessions sessions across $total_projects projects"
+    printf "\n"
 
-      if [ -f "$gz_dest" ] && [ "$jsonl_file" -ot "$gz_dest" ]; then
-        continue
-      fi
+    # Sync each project directory
+    while IFS= read -r -d '' project_dir; do
+      local project_name
+      project_name=$(basename "$project_dir")
+      local dest_project="$DEST_DIR/$project_name"
+      mkdir -p "$dest_project"
 
-      gzip -cn "$jsonl_file" > "$gz_dest"
-      ((added++)) || true
-    done < <(find "$project_dir" -maxdepth 1 -name "*.jsonl" -print0 2>/dev/null)
+      # Compress JSONL files
+      while IFS= read -r -d '' jsonl_file; do
+        local filename gz_dest
+        filename=$(basename "$jsonl_file")
+        gz_dest="$dest_project/${filename}.gz"
 
-    # Copy non-JSONL files as-is
-    while IFS= read -r -d '' other_file; do
-      local filename dest_file
-      filename=$(basename "$other_file")
-      dest_file="$dest_project/$filename"
-
-      if [ -f "$dest_file" ] && [ "$other_file" -ot "$dest_file" ]; then
-        continue
-      fi
-
-      cp "$other_file" "$dest_file"
-      ((updated++)) || true
-    done < <(find "$project_dir" -maxdepth 1 -type f ! -name "*.jsonl" -print0 2>/dev/null)
-
-  done < <(find "$SOURCE_DIR" -mindepth 1 -maxdepth 1 -type d -print0)
-
-  # Remove deleted projects (with safety check)
-  if [ -d "$DEST_DIR" ]; then
-    local source_count backup_count
-    source_count=$(find "$SOURCE_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
-    backup_count=$(find "$DEST_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
-
-    if [ "$backup_count" -gt 0 ] && [ "$source_count" -eq 0 ]; then
-      warn "Source directory appears empty — skipping removal to protect backups"
-      log "WARNING: source empty, skipping deletion pass"
-    else
-      while IFS= read -r -d '' backup_project; do
-        local project_name
-        project_name=$(basename "$backup_project")
-        if [ ! -d "$SOURCE_DIR/$project_name" ]; then
-          log "Removing deleted project: $project_name"
-          rm -rf "$backup_project"
-          ((removed++)) || true
+        if [ -f "$gz_dest" ] && [ "$jsonl_file" -ot "$gz_dest" ]; then
+          continue
         fi
-      done < <(find "$DEST_DIR" -mindepth 1 -maxdepth 1 -type d -print0)
+
+        gzip -cn "$jsonl_file" > "$gz_dest"
+        ((added++)) || true
+      done < <(find "$project_dir" -maxdepth 1 -name "*.jsonl" -print0 2>/dev/null)
+
+      # Copy non-JSONL files as-is
+      while IFS= read -r -d '' other_file; do
+        local filename dest_file
+        filename=$(basename "$other_file")
+        dest_file="$dest_project/$filename"
+
+        if [ -f "$dest_file" ] && [ "$other_file" -ot "$dest_file" ]; then
+          continue
+        fi
+
+        cp "$other_file" "$dest_file"
+        ((updated++)) || true
+      done < <(find "$project_dir" -maxdepth 1 -type f ! -name "*.jsonl" -print0 2>/dev/null)
+
+    done < <(find "$SOURCE_DIR" -mindepth 1 -maxdepth 1 -type d -print0)
+
+    # Remove deleted projects (with safety check)
+    if [ -d "$DEST_DIR" ]; then
+      local source_count backup_count
+      source_count=$(find "$SOURCE_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+      backup_count=$(find "$DEST_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+
+      if [ "$backup_count" -gt 0 ] && [ "$source_count" -eq 0 ]; then
+        warn "Source directory appears empty — skipping removal to protect backups"
+        log "WARNING: source empty, skipping deletion pass"
+      else
+        while IFS= read -r -d '' backup_project; do
+          local project_name
+          project_name=$(basename "$backup_project")
+          if [ ! -d "$SOURCE_DIR/$project_name" ]; then
+            log "Removing deleted project: $project_name"
+            rm -rf "$backup_project"
+            ((removed++)) || true
+          fi
+        done < <(find "$DEST_DIR" -mindepth 1 -maxdepth 1 -type d -print0)
+      fi
+    fi
+
+    info "Compressed: $added, copied: $updated, removed: $removed"
+    log "Processed: $added compressed, $updated copied, $removed removed"
+  fi
+
+  # Backup history.jsonl (Tier 2)
+  if [ "$sync_sessions_tier" = true ] && [ -f "$CLAUDE_DIR/history.jsonl" ]; then
+    if [ ! -f "$BACKUP_DIR/history.jsonl.gz" ] || \
+       [ "$CLAUDE_DIR/history.jsonl" -nt "$BACKUP_DIR/history.jsonl.gz" ]; then
+      gzip -cn "$CLAUDE_DIR/history.jsonl" > "$BACKUP_DIR/history.jsonl.gz"
+      info "history.jsonl backed up"
     fi
   fi
 
-  info "Compressed: $added, copied: $updated, removed: $removed"
-  log "Processed: $added compressed, $updated copied, $removed removed"
+  # Write manifest
+  write_manifest
 
   # Commit and push
   cd "$BACKUP_DIR"
@@ -637,7 +671,7 @@ cmd_uninstall() {
 
 case "${1:-}" in
   init|"")       cmd_init ;;
-  sync)          cmd_sync ;;
+  sync)          shift; cmd_sync "$@" ;;
   status)        cmd_status ;;
   restore)       cmd_restore "${2:-}" ;;
   uninstall)     cmd_uninstall ;;
