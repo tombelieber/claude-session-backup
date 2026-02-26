@@ -1,29 +1,121 @@
-# Claude Backup
+# claude-backup
 
-Back up your entire Claude Code environment — locally or to a private GitHub repo.
+**Claude Code deletes your sessions after 30 days.**
 
-## Quick Start
+Every debugging session. Every architecture decision. Every prompt you spent an hour crafting. Gone.
+
+WhatsApp keeps your messages forever. Telegram keeps them forever. Discord keeps them forever. Claude Code — the tool you pay $20–200/mo for — gives you 30 days.
 
 ```bash
 npx claude-backup
 ```
 
-Interactive setup checks requirements, creates a private repo, backs up your config and sessions, and schedules daily automatic backups.
+One command. Your sessions are safe. Auto-syncs daily.
 
-## What It Does
+---
 
-Claude Backup provides two-tier protection for your Claude Code environment:
+## What You're Losing
 
-- **Config profile** — settings, CLAUDE.md, agents, hooks, skills, rules. Lightweight (< 100 KB), fast to backup, portable between machines, safe to share with teammates.
-- **Sessions archive** — all chat history compressed with gzip. Large (hundreds of MB to GB), private, pushed to a private GitHub repo.
+Claude Code stores everything in `~/.claude/` — your settings, custom agents, hooks, skills, and **every conversation you've ever had**. Sessions older than 30 days? Silently deleted.
 
-## Requirements
+Each session is:
 
-- **macOS** (Linux coming soon)
-- **git**
-- **gzip** (built-in on macOS)
-- **python3** (built-in on macOS since Catalina)
-- **gh** ([GitHub CLI](https://cli.github.com)) — *optional*. Enables remote backup to GitHub. Without it, backups are local-only.
+- A **debugging journal** — the exact steps that fixed that impossible bug
+- An **architecture record** — why you chose that pattern, with the AI's reasoning
+- A **prompt library** — the carefully worded instructions that actually worked
+- A **learning log** — mistakes, corrections, breakthroughs, all timestamped
+
+You can't Google your own Claude sessions. Once they're gone, they're gone.
+
+## How It Works
+
+```bash
+npx claude-backup
+```
+
+Interactive setup:
+
+1. Checks requirements (git, gzip, python3)
+2. Creates a private GitHub repo (or local-only if you prefer)
+3. Backs up your config and all sessions (gzipped)
+4. Schedules daily automatic backups (3:00 AM)
+
+That's it. Run it once, forget about it.
+
+## Get Your Sessions Back
+
+Browse and restore any session from your backups:
+
+```bash
+# List all backed-up sessions
+claude-backup restore --list
+
+# Show the last 5 sessions
+claude-backup restore --last 5
+
+# Filter by date
+claude-backup restore --date 2026-02-27
+
+# Filter by project
+claude-backup restore --project myproject
+
+# Restore a specific session
+claude-backup restore <uuid>
+```
+
+The session index is auto-generated on every sync and rebuilt from the `*.jsonl.gz` files — you never need to manage it manually.
+
+## What Gets Saved
+
+**Config profile** — settings, CLAUDE.md, agents, hooks, skills, rules. Lightweight (< 100 KB), portable between machines.
+
+**Sessions archive** — all chat history, compressed with gzip. Your entire conversation history, safe in a private repo.
+
+| Item | Source | Notes |
+| --- | --- | --- |
+| Settings | `settings.json` | Plugins, preferences |
+| Local settings | `settings.local.json` | Permission overrides |
+| User instructions | `CLAUDE.md` | User-level system prompt |
+| Custom agents | `agents/` | Agent definitions |
+| Custom hooks | `hooks/` | Automation scripts |
+| Custom skills | `skills/` | User-authored skills |
+| Custom rules | `rules/` | Custom rules |
+| Session files | `projects/**/*.jsonl` | Chat history (gzipped) |
+| Session indexes | `projects/**/sessions-index.json` | Session metadata |
+| Command history | `history.jsonl` | CLI command history (gzipped) |
+
+All source paths are relative to `~/.claude/`.
+
+## Machine Migration
+
+Your config took hours to perfect. Move it in seconds.
+
+```bash
+# Old machine
+claude-backup export-config
+# => ~/claude-config-2026-02-25.tar.gz (47 KB)
+
+# Transfer via AirDrop, USB, email, etc.
+
+# New machine
+npx claude-backup import-config claude-config-2026-02-25.tar.gz
+```
+
+Plugins are not included in the export (they are re-downloaded on first launch). Only the plugin manifest in `settings.json` is backed up.
+
+## Local-Only Mode
+
+No GitHub account? No problem. Backups stay on your machine.
+
+```bash
+# Automatic: if gh is not installed, local mode is used
+npx claude-backup
+
+# Explicit: force local mode even if gh is available
+npx claude-backup --local
+```
+
+Backups go to `~/.claude-backup/` as a local git repo. Everything works the same — sync, restore, peek, export/import.
 
 ## Commands
 
@@ -48,103 +140,16 @@ Claude Backup provides two-tier protection for your Claude Code environment:
 | `claude-backup <any> --json` | Structured JSON output (for scripts/agents) |
 | `claude-backup init --local` | Force local-only mode (no GitHub) |
 
-## Machine Migration
-
-Export your config on one machine, import it on another.
-
-```bash
-# Old machine
-claude-backup export-config
-# => ~/claude-config-2026-02-25.tar.gz (47 KB)
-
-# Transfer via AirDrop, USB, email, etc.
-
-# New machine
-npx claude-backup import-config claude-config-2026-02-25.tar.gz
-```
-
-Plugins are not included in the export (they are re-downloaded on first launch). Only the plugin manifest in `settings.json` is backed up.
-
-## Session Restore
-
-Browse and restore individual sessions from your backups.
-
-```bash
-# List all backed-up sessions
-claude-backup restore --list
-
-# Show only the last 5 sessions
-claude-backup restore --last 5
-
-# Filter by date (UTC)
-claude-backup restore --date 2026-02-27
-
-# Filter by project name (partial match)
-claude-backup restore --project myproject
-
-# Restore a specific session
-claude-backup restore <uuid>
-
-# Overwrite if session already exists locally
-claude-backup restore <uuid> --force
-```
-
-The session index (`session-index.json`) is auto-generated on every sync. It is gitignored and rebuilt from the `*.jsonl.gz` files each time — you never need to manage it manually. Dates in the index and `--date` filter use UTC.
-
-## Local-Only Mode
-
-Backup without GitHub — no account, no remote, no network needed.
-
-```bash
-# Automatic: if gh is not installed, local mode is used
-npx claude-backup
-
-# Explicit: force local mode even if gh is available
-npx claude-backup --local
-```
-
-In local mode, backups are committed to a local git repo at `~/.claude-backup/` but never pushed. Everything else works identically — sync, restore, peek, export/import.
-
 ## Claude Code Plugin
 
-Install the plugin to let Claude operate backups on your behalf:
+Let Claude manage backups for you:
 
 ```bash
 /plugin marketplace add tombelieber/claude-backup
 /plugin install claude-backup
 ```
 
-The plugin provides a skill that teaches Claude the CLI commands. The agent always uses `--json` for structured output.
-
-## What's Backed Up
-
-| Item | Source | Notes |
-| --- | --- | --- |
-| Settings | `settings.json` | Plugins, preferences |
-| Local settings | `settings.local.json` | Permission overrides |
-| User instructions | `CLAUDE.md` | User-level system prompt |
-| Custom agents | `agents/` | Agent definitions |
-| Custom hooks | `hooks/` | Automation scripts |
-| Custom skills | `skills/` | User-authored skills |
-| Custom rules | `rules/` | Custom rules |
-| Session files | `projects/**/*.jsonl` | Chat history (gzipped) |
-| Session indexes | `projects/**/sessions-index.json` | Session metadata |
-| Command history | `history.jsonl` | CLI command history (gzipped) |
-
-All source paths are relative to `~/.claude/`.
-
-## What's Excluded
-
-| Item | Why |
-| --- | --- |
-| `.credentials.json` | Auth tokens -- security risk |
-| `.encryption_key` | Encryption key -- security risk |
-| `plugins/` | Re-downloadable from registry |
-| `debug/`, `file-history/` | Transient logs and edit history |
-| `cache/`, `.search_cache/`, `.tmp/`, `paste-cache/` | Caches, rebuilt automatically |
-| `session-env/`, `shell-snapshots/` | Runtime state |
-| `statsig/`, `telemetry/`, `usage-data/` | Analytics, not user data |
-| `todos/`, `teams/`, `plans/`, `ide/` | Ephemeral per-session data |
+The plugin teaches Claude the CLI commands. The agent always uses `--json` for structured output.
 
 ## Security
 
@@ -153,7 +158,24 @@ All source paths are relative to `~/.claude/`.
 - **`export-config` warns** if any file appears to contain sensitive content (tokens, secrets, passwords).
 - **`import-config` does not overwrite** existing credentials.
 
-## Storage
+<details>
+<summary><strong>What's excluded</strong></summary>
+
+| Item | Why |
+| --- | --- |
+| `.credentials.json` | Auth tokens — security risk |
+| `.encryption_key` | Encryption key — security risk |
+| `plugins/` | Re-downloadable from registry |
+| `debug/`, `file-history/` | Transient logs and edit history |
+| `cache/`, `.search_cache/`, `.tmp/`, `paste-cache/` | Caches, rebuilt automatically |
+| `session-env/`, `shell-snapshots/` | Runtime state |
+| `statsig/`, `telemetry/`, `usage-data/` | Analytics, not user data |
+| `todos/`, `teams/`, `plans/`, `ide/` | Ephemeral per-session data |
+
+</details>
+
+<details>
+<summary><strong>Storage layout</strong></summary>
 
 ```text
 ~/.claude-backup/                   # Git repo -> private GitHub repo
@@ -181,22 +203,27 @@ All source paths are relative to `~/.claude/`.
 | `github.com/<you>/claude-backup-data` | Remote private repo |
 | `~/Library/LaunchAgents/com.claude-backup.plist` | macOS scheduler (daily 3:00 AM) |
 
+</details>
+
+## Requirements
+
+- **macOS** (Linux coming soon)
+- **git**
+- **gzip** (built-in on macOS)
+- **python3** (built-in on macOS since Catalina)
+- **gh** ([GitHub CLI](https://cli.github.com)) — *optional*. Enables remote backup. Without it, backups are local-only.
+
 ## Uninstall
 
 ```bash
 claude-backup uninstall
 ```
 
-This removes the daily scheduler and optionally deletes local backup data. Delete the GitHub repo separately:
+Removes the daily scheduler and optionally deletes local backup data. Delete the GitHub repo separately:
 
 ```bash
 gh repo delete claude-backup-data
 ```
-
-## Future Plans
-
-- Linux support (systemd timer)
-- Session encryption (age)
 
 ## Related
 

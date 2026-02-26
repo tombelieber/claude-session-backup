@@ -1,7 +1,7 @@
 {
   "name": "claude-backup",
   "version": "3.1.0",
-  "description": "Back up your entire Claude Code environment to GitHub — settings, CLAUDE.md, agents, hooks, skills, sessions (gzip), daily auto-sync via launchd, machine migration with export/import",
+  "description": "Claude Code deletes your sessions after 30 days. Save them — config, chat history, daily auto-sync, machine migration. One command: npx claude-backup",
   "bin": {
     "claude-backup": "cli.sh"
   },
