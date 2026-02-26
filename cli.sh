@@ -240,6 +240,7 @@ launchd-stderr.log
 *.tmp
 .sync.lock/
 cli.sh
+session-index.json
 GITIGNORE
 
   info "Initialized at $BACKUP_DIR"
@@ -487,6 +488,13 @@ cmd_sync() {
   if [ ! -d "$BACKUP_DIR/.git" ]; then
     fail "Not initialized. Run: claude-backup init"
   fi
+
+  # v3 migration: ensure session-index.json is gitignored (existing installs)
+  local gi="$BACKUP_DIR/.gitignore"
+  if [ -f "$gi" ] && ! grep -qF 'session-index.json' "$gi"; then
+    echo 'session-index.json' >> "$gi"
+  fi
+
   local config_count=0
 
   # Tier 1: Config backup
@@ -584,8 +592,9 @@ cmd_sync() {
     fi
   fi
 
-  # Write manifest
+  # Write manifest (always) and session index (only when sessions were synced)
   write_manifest
+  if [ "$sync_sessions_tier" = true ]; then build_session_index; fi
 
   # Commit and push
   cd "$BACKUP_DIR"
