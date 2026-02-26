@@ -1,6 +1,6 @@
 {
   "name": "claude-backup",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Back up your entire Claude Code environment to GitHub — settings, CLAUDE.md, agents, hooks, skills, sessions (gzip), daily auto-sync via launchd, machine migration with export/import",
   "bin": {
     "claude-backup": "cli.sh"
