@@ -885,11 +885,6 @@ cmd_restore() {
 
   # ── Listing modes ────────────────────────────────────────────────────────────
   if [ "$mode" != "uuid" ]; then
-    printf "\n${BOLD}Claude Code Sessions${NC}\n\n"
-    printf "  %-38s %-36s %6s  %s\n" "PROJECT" "UUID" "SIZE" "DATE (UTC)"
-    printf "  %-38s %-36s %6s  %s\n" "--------------------------------------" \
-      "------------------------------------" "------" "----------"
-
     local query_mode query_arg
     case "$mode" in
       list)    query_mode="all";     query_arg="" ;;
@@ -898,19 +893,40 @@ cmd_restore() {
       project) query_mode="project"; query_arg="$filter_project" ;;
     esac
 
+    if [ "$JSON_OUTPUT" = true ]; then
+      # Build JSON array from pipe-delimited output
+      local json_sessions="["
+      local first_entry=true
+      while IFS='|' read -r s_uuid s_hash s_size s_date; do
+        if [ "$first_entry" = true ]; then
+          first_entry=false
+        else
+          json_sessions="${json_sessions},"
+        fi
+        json_sessions="${json_sessions}{\"uuid\":\"${s_uuid}\",\"projectHash\":\"${s_hash}\",\"sizeBytes\":${s_size},\"backedUpAt\":\"${s_date}\"}"
+      done < <(query_session_index "$query_mode" "$query_arg")
+      json_sessions="${json_sessions}]"
+      printf '{"sessions":%s}\n' "$json_sessions"
+      return 0
+    fi
+
+    printf "\n${BOLD}Claude Code Sessions${NC}\n\n"
+    printf "  %-38s %-36s %6s  %s\n" "PROJECT" "UUID" "SIZE" "DATE (UTC)"
+    printf "  %-38s %-36s %6s  %s\n" "--------------------------------------" \
+      "------------------------------------" "------" "----------"
+
     local shown=0
     while IFS='|' read -r s_uuid s_hash s_size s_date; do
       local display_hash display_size display_date
-      # Show last 38 chars of project hash (most specific part)
       if [ ${#s_hash} -gt 38 ]; then
         display_hash="...${s_hash: -35}"
       else
         display_hash="$s_hash"
       fi
       display_size=$(( s_size / 1024 ))
-      display_date="${s_date%T*}"  # strip time, show date only
+      display_date="${s_date%T*}"
       printf "  %-38s %-36s %5sK  %s\n" "$display_hash" "$s_uuid" "$display_size" "$display_date"
-      ((shown++)) || true  # || true: guards against set -e (see build_session_index)
+      ((shown++)) || true
     done < <(query_session_index "$query_mode" "$query_arg")
 
     if [ $shown -eq 0 ]; then
@@ -968,14 +984,22 @@ cmd_restore() {
   printf "  ${DIM}To:${NC}   $target_file\n\n"
 
   if [ -f "$target_file" ] && [ "$force" = false ]; then
-    warn "File already exists. Use --force to overwrite."
+    if [ "$JSON_OUTPUT" = true ]; then
+      json_err '{"error":"File already exists. Use --force to overwrite."}'
+    else
+      warn "File already exists. Use --force to overwrite."
+    fi
     return 1
   fi
 
   mkdir -p "$target_dir"
   gzip -dkc "$gz_file" > "$target_file"
-  info "Session restored: $target_file"
-  printf "\n"
+  if [ "$JSON_OUTPUT" = true ]; then
+    printf '{"ok":true,"restored":{"from":"%s","to":"%s"}}\n' "$gz_file" "$target_file"
+  else
+    info "Session restored: $target_file"
+    printf "\n"
+  fi
 }
 cmd_uninstall() {
   printf "\n${BOLD}Uninstalling Claude Backup${NC}\n\n"
@@ -1084,9 +1108,13 @@ cmd_export_config() {
   local size
   size=$(du -h "$output_file" 2>/dev/null | cut -f1 | tr -d ' ')
 
-  printf "\n${GREEN}${BOLD}Exported${NC} to ${BOLD}${output_file}${NC} (${size})\n"
-  printf "${DIM}Transfer via AirDrop, USB, or email. Import with:${NC}\n"
-  printf "  claude-backup import-config ${output_file}\n\n"
+  if [ "$JSON_OUTPUT" = true ]; then
+    printf '{"ok":true,"exported":{"path":"%s","size":"%s","files":%s}}\n' "$output_file" "$size" "$exported"
+  else
+    printf "\n${GREEN}${BOLD}Exported${NC} to ${BOLD}${output_file}${NC} (${size})\n"
+    printf "${DIM}Transfer via AirDrop, USB, or email. Import with:${NC}\n"
+    printf "  claude-backup import-config ${output_file}\n\n"
+  fi
 }
 
 cmd_import_config() {
@@ -1170,9 +1198,13 @@ cmd_import_config() {
     fi
   done
 
-  printf "\n${GREEN}${BOLD}Done!${NC} Imported $imported files.\n"
-  printf "${DIM}Restart Claude Code to apply settings.${NC}\n"
-  printf "${DIM}Note: Plugins will be downloaded on first launch.${NC}\n\n"
+  if [ "$JSON_OUTPUT" = true ]; then
+    printf '{"ok":true,"imported":{"files":%s}}\n' "$imported"
+  else
+    printf "\n${GREEN}${BOLD}Done!${NC} Imported $imported files.\n"
+    printf "${DIM}Restart Claude Code to apply settings.${NC}\n"
+    printf "${DIM}Note: Plugins will be downloaded on first launch.${NC}\n\n"
+  fi
 }
 
 # Pre-parse global flags before subcommand dispatch
