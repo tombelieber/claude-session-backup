@@ -671,29 +671,47 @@ cmd_sync() {
   git commit -q -m "backup $(date '+%Y-%m-%d %H:%M') — ${file_count} files, ${total_size} total"
   printf "${GREEN}✓${NC}\n"
 
-  step "Pushing to GitHub..."
-  if ! git push -u origin HEAD -q 2>&1; then
-    printf "${RED}FAILED${NC}\n"
-    warn "Push failed. Check your GitHub authentication and network."
-    log "Push failed"
-    return 1
+  local mode="${BACKUP_MODE:-$(read_backup_mode)}"
+  if [ "$mode" = "github" ]; then
+    step "Pushing to GitHub..."
+    if ! git push -u origin HEAD -q 2>&1; then
+      printf "${RED}FAILED${NC}\n"
+      warn "Push failed. Check your GitHub authentication and network."
+      log "Push failed"
+      return 1
+    fi
+    printf "${GREEN}✓${NC}\n"
+    log "Backup pushed successfully"
+  else
+    log "Backup committed locally (local mode — no push)"
   fi
-  printf "${GREEN}✓${NC}\n"
 
-  log "Backup pushed successfully"
   printf "\n${GREEN}${BOLD}Done!${NC} Backup complete.\n"
 }
 cmd_status() {
+  local mode
+  mode=$(read_backup_mode)
+
+  if [ "$JSON_OUTPUT" = true ]; then
+    cmd_status_json "$mode"
+    return
+  fi
+
   printf "\n${BOLD}Claude Backup${NC} v$VERSION\n\n"
 
   if [ ! -d "$BACKUP_DIR/.git" ]; then
     fail "Not initialized. Run: claude-backup init"
   fi
 
-  # Remote URL
-  local remote_url
-  remote_url=$(cd "$BACKUP_DIR" && git remote get-url origin 2>/dev/null || echo "unknown")
-  printf "  ${BOLD}Repo:${NC}       $remote_url\n"
+  # Mode
+  printf "  ${BOLD}Mode:${NC}        $mode\n"
+
+  # Remote URL (github mode only)
+  if [ "$mode" = "github" ]; then
+    local remote_url
+    remote_url=$(cd "$BACKUP_DIR" && git remote get-url origin 2>/dev/null || echo "unknown")
+    printf "  ${BOLD}Repo:${NC}        $remote_url\n"
+  fi
 
   # Last backup time
   local last_commit
@@ -750,6 +768,62 @@ cmd_status() {
 
   printf "\n"
 }
+
+cmd_status_json() {
+  local mode="$1"
+
+  if [ ! -d "$BACKUP_DIR/.git" ]; then
+    json_err '{"error":"Not initialized. Run: claude-backup init"}'
+    exit 1
+  fi
+
+  local repo="null"
+  if [ "$mode" = "github" ]; then
+    local remote_url
+    remote_url=$(cd "$BACKUP_DIR" && git remote get-url origin 2>/dev/null || echo "")
+    if [ -n "$remote_url" ]; then
+      repo="\"$remote_url\""
+    fi
+  fi
+
+  local last_backup
+  last_backup=$(cd "$BACKUP_DIR" && git log -1 --format="%cI" 2>/dev/null || echo "")
+
+  local backup_size="0"
+  if [ -d "$DEST_DIR" ]; then
+    backup_size=$(du -sh "$DEST_DIR" 2>/dev/null | cut -f1 | tr -d ' ')
+  fi
+
+  local config_files=0 config_size="0"
+  if [ -d "$CONFIG_DEST" ]; then
+    config_files=$(find "$CONFIG_DEST" -type f 2>/dev/null | wc -l | tr -d ' ')
+    config_size=$(du -sh "$CONFIG_DEST" 2>/dev/null | cut -f1 | tr -d ' ')
+  fi
+
+  local session_files=0 session_projects=0 session_size="0"
+  if [ -d "$DEST_DIR" ]; then
+    session_files=$(find "$DEST_DIR" -name "*.gz" -type f 2>/dev/null | wc -l | tr -d ' ')
+    session_projects=$(find "$DEST_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    session_size=$(du -sh "$DEST_DIR" 2>/dev/null | cut -f1 | tr -d ' ')
+  fi
+
+  local scheduler="inactive"
+  if launchctl list "$PLIST_NAME" &>/dev/null; then
+    scheduler="active"
+  fi
+
+  local index_sessions=0
+  local index_file="$BACKUP_DIR/session-index.json"
+  if [ -f "$index_file" ]; then
+    index_sessions=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('sessions',[])))" "$index_file" 2>/dev/null || echo "0")
+  fi
+
+  printf '{"version":"%s","mode":"%s","repo":%s,"lastBackup":"%s","backupSize":"%s","config":{"files":%s,"size":"%s"},"sessions":{"files":%s,"projects":%s,"size":"%s"},"scheduler":"%s","index":{"sessions":%s}}\n' \
+    "$VERSION" "$mode" "$repo" "$last_backup" "$backup_size" \
+    "$config_files" "$config_size" "$session_files" "$session_projects" "$session_size" \
+    "$scheduler" "$index_sessions"
+}
+
 cmd_restore() {
   local mode="uuid"
   local uuid=""
