@@ -43,10 +43,19 @@ else
 fi
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE" 2>/dev/null || true; }
-info() { printf "  ${GREEN}✓${NC} %s\n" "$*"; }
-warn() { printf "  ${YELLOW}!${NC} %s\n" "$*"; }
-fail() { printf "  ${RED}✗${NC} %s\n" "$*"; exit 1; }
-step() { printf "  ${DIM}%s${NC} " "$*"; }
+info() { if [ "$JSON_OUTPUT" != true ]; then printf "  ${GREEN}✓${NC} %s\n" "$*"; fi; }
+warn() { if [ "$JSON_OUTPUT" != true ]; then printf "  ${YELLOW}!${NC} %s\n" "$*"; fi; }
+fail() {
+  if [ "$JSON_OUTPUT" = true ]; then
+    printf '{"error":"%s"}\n' "$*" >&2
+  else
+    printf "  ${RED}✗${NC} %s\n" "$*"
+  fi
+  exit 1
+}
+step() { if [ "$JSON_OUTPUT" != true ]; then printf "  ${DIM}%s${NC} " "$*"; fi; }
+json_out() { if [ "$JSON_OUTPUT" = true ]; then printf '%s\n' "$1"; fi; }
+json_err() { if [ "$JSON_OUTPUT" = true ]; then printf '%s\n' "$1" >&2; fi; }
 
 show_help() {
   cat <<EOF
@@ -1022,15 +1031,36 @@ cmd_import_config() {
   printf "${DIM}Note: Plugins will be downloaded on first launch.${NC}\n\n"
 }
 
+# Pre-parse global flags before subcommand dispatch
+JSON_OUTPUT=false
+FORCE_LOCAL=false
+FILTERED_ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --json)  JSON_OUTPUT=true ;;
+    --local) FORCE_LOCAL=true ;;
+    *)       FILTERED_ARGS+=("$arg") ;;
+  esac
+done
+set -- "${FILTERED_ARGS[@]+"${FILTERED_ARGS[@]}"}"
+# ${FILTERED_ARGS[@]+"..."} avoids "unbound variable" under set -u when array is empty
+
 case "${1:-}" in
   init|"")       cmd_init ;;
   sync)          shift; cmd_sync "$@" ;;
   status)        cmd_status ;;
   restore)       shift; cmd_restore "$@" ;;
+  peek)          cmd_peek "${2:-}" ;;
   uninstall)     cmd_uninstall ;;
   export-config) cmd_export_config "${2:-}" ;;
   import-config) shift; cmd_import_config "$@" ;;
   --help|-h)     show_help ;;
-  --version|-v)  echo "claude-backup v$VERSION" ;;
+  --version|-v)
+    if [ "$JSON_OUTPUT" = true ]; then
+      printf '{"version":"%s"}\n' "$VERSION"
+    else
+      echo "claude-backup v$VERSION"
+    fi
+    ;;
   *)             echo "Unknown command: $1"; show_help; exit 1 ;;
 esac
