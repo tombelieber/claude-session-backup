@@ -713,7 +713,8 @@ cmd_restore() {
       --list)    mode="list" ;;
       --force)   force=true ;;
       --last)    mode="last";    ((i++)) || true; last_n="${args[$i]:-10}"
-                 [[ "$last_n" == --* ]] && { warn "Missing number after --last"; return 1; } ;;
+                 [[ "$last_n" == --* ]] && { warn "Missing number after --last"; return 1; }
+                 [[ ! "$last_n" =~ ^[0-9]+$ ]] && { warn "--last requires a positive integer"; return 1; } ;;
       --date)    mode="date";    ((i++)) || true; filter_date="${args[$i]:-}"
                  [ -z "$filter_date" ] && { warn "Missing value for --date (expected YYYY-MM-DD)"; return 1; }
                  [[ "$filter_date" == --* ]] && { warn "Missing value for --date (expected YYYY-MM-DD)"; return 1; } ;;
