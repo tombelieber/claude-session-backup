@@ -58,7 +58,7 @@ fail() {
 step() { if [ "$JSON_OUTPUT" != true ]; then printf "  ${DIM}%s${NC} " "$*"; fi; }
 json_out() { if [ "$JSON_OUTPUT" = true ]; then printf '%s\n' "$1"; fi; }
 json_err() { if [ "$JSON_OUTPUT" = true ]; then printf '%s\n' "$1" >&2; fi; }
-json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g'; }
+json_escape() { python3 -c "import json,sys; sys.stdout.write(json.dumps(sys.argv[1])[1:-1])" "$1"; }
 
 show_help() {
   cat <<EOF
@@ -105,25 +105,25 @@ check_core_requirements() {
 
   step "git"
   if command -v git &>/dev/null; then
-    printf "${GREEN}✓${NC}\n"
+    if [ "$JSON_OUTPUT" != true ]; then printf "${GREEN}✓${NC}\n"; fi
   else
-    printf "${RED}✗ not found${NC}\n"
+    if [ "$JSON_OUTPUT" != true ]; then printf "${RED}✗ not found${NC}\n"; fi
     ok=false
   fi
 
   step "gzip"
   if command -v gzip &>/dev/null; then
-    printf "${GREEN}✓${NC}\n"
+    if [ "$JSON_OUTPUT" != true ]; then printf "${GREEN}✓${NC}\n"; fi
   else
-    printf "${RED}✗ not found${NC}\n"
+    if [ "$JSON_OUTPUT" != true ]; then printf "${RED}✗ not found${NC}\n"; fi
     ok=false
   fi
 
   step "python3"
   if command -v python3 &>/dev/null; then
-    printf "${GREEN}✓${NC}\n"
+    if [ "$JSON_OUTPUT" != true ]; then printf "${GREEN}✓${NC}\n"; fi
   else
-    printf "${RED}✗ not found${NC}\n"
+    if [ "$JSON_OUTPUT" != true ]; then printf "${RED}✗ not found${NC}\n"; fi
     ok=false
   fi
 
@@ -223,9 +223,9 @@ cmd_init() {
   fi
 
   # Check core requirements (git, gzip — always needed)
-  printf "${BOLD}Checking requirements...${NC}\n"
+  if [ "$JSON_OUTPUT" != true ]; then printf "${BOLD}Checking requirements...${NC}\n"; fi
   check_core_requirements
-  printf "\n"
+  if [ "$JSON_OUTPUT" != true ]; then printf "\n"; fi
 
   # Determine mode
   local BACKUP_MODE
@@ -433,7 +433,7 @@ write_manifest() {
 {
   "version": "$VERSION",
   "mode": "$mode",
-  "machine": "$(hostname)",
+  "machine": "$(json_escape "$(hostname)")",
   "user": "$cached_user",
   "lastSync": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
   "config": {
@@ -709,6 +709,7 @@ cmd_sync() {
     if ! push_output=$(git push -u origin HEAD -q 2>&1); then
       if [ "$JSON_OUTPUT" != true ]; then printf "${RED}FAILED${NC}\n"; fi
       warn "Push failed. Check your GitHub authentication and network."
+      json_err '{"error":"Push failed. Check your GitHub authentication and network."}'
       log "Push failed"
       return 1
     fi
@@ -882,14 +883,14 @@ cmd_restore() {
       --list)    mode="list" ;;
       --force)   force=true ;;
       --last)    mode="last";    ((i++)) || true; last_n="${args[$i]:-10}"
-                 [[ "$last_n" == --* ]] && { warn "Missing number after --last"; return 1; }
-                 [[ ! "$last_n" =~ ^[0-9]+$ ]] && { warn "--last requires a positive integer"; return 1; } ;;
+                 [[ "$last_n" == --* ]] && fail "Missing number after --last"
+                 [[ ! "$last_n" =~ ^[0-9]+$ ]] && fail "--last requires a positive integer" ;;
       --date)    mode="date";    ((i++)) || true; filter_date="${args[$i]:-}"
-                 [ -z "$filter_date" ] && { warn "Missing value for --date (expected YYYY-MM-DD)"; return 1; }
-                 [[ "$filter_date" == --* ]] && { warn "Missing value for --date (expected YYYY-MM-DD)"; return 1; } ;;
+                 [ -z "$filter_date" ] && fail "Missing value for --date (expected YYYY-MM-DD)"
+                 [[ "$filter_date" == --* ]] && fail "Missing value for --date (expected YYYY-MM-DD)" ;;
       --project) mode="project"; ((i++)) || true; filter_project="${args[$i]:-}"
-                 [ -z "$filter_project" ] && { warn "Missing value for --project"; return 1; }
-                 [[ "$filter_project" == --* ]] && { warn "Missing value for --project"; return 1; } ;;
+                 [ -z "$filter_project" ] && fail "Missing value for --project"
+                 [[ "$filter_project" == --* ]] && fail "Missing value for --project" ;;
       *)         [ "$mode" = "uuid" ] && uuid="${args[$i]}" ;;
     esac
     ((i++)) || true
@@ -981,9 +982,13 @@ cmd_restore() {
   match_count=$(echo "$matches" | wc -l | tr -d ' ')
 
   if [ "$match_count" -gt 1 ]; then
-    printf "\n${YELLOW}Multiple matches found:${NC}\n"
-    echo "$matches" | while read -r f; do printf "  %s\n" "$f"; done
-    printf "\nProvide a more specific UUID.\n\n"
+    if [ "$JSON_OUTPUT" = true ]; then
+      json_err '{"error":"Multiple matches found. Provide a more specific UUID."}'
+    else
+      printf "\n${YELLOW}Multiple matches found:${NC}\n"
+      echo "$matches" | while read -r f; do printf "  %s\n" "$f"; done
+      printf "\nProvide a more specific UUID.\n\n"
+    fi
     return 1
   fi
 
@@ -995,9 +1000,11 @@ cmd_restore() {
   local target_dir="$SOURCE_DIR/$project_dir"
   local target_file="$target_dir/$filename"
 
-  printf "\n${BOLD}Restoring session:${NC}\n"
-  printf "  ${DIM}From:${NC} $gz_file\n"
-  printf "  ${DIM}To:${NC}   $target_file\n\n"
+  if [ "$JSON_OUTPUT" != true ]; then
+    printf "\n${BOLD}Restoring session:${NC}\n"
+    printf "  ${DIM}From:${NC} $gz_file\n"
+    printf "  ${DIM}To:${NC}   $target_file\n\n"
+  fi
 
   if [ -f "$target_file" ] && [ "$force" = false ]; then
     if [ "$JSON_OUTPUT" = true ]; then
@@ -1219,7 +1226,7 @@ cmd_export_config() {
     output_file="$HOME/claude-config-${timestamp}.tar.gz"
   fi
 
-  printf "\n${BOLD}Exporting Claude Code config...${NC}\n\n"
+  if [ "$JSON_OUTPUT" != true ]; then printf "\n${BOLD}Exporting Claude Code config...${NC}\n\n"; fi
 
   # Create temp dir for export
   local tmp_dir
@@ -1279,7 +1286,7 @@ cmd_export_config() {
     fi
   done < <(find "$tmp_dir" -type f -print0 2>/dev/null)
 
-  if [ "$sensitive_found" = true ]; then
+  if [ "$sensitive_found" = true ] && [ "$JSON_OUTPUT" != true ]; then
     printf "\n  ${YELLOW}Review the files above before sharing this export.${NC}\n"
   fi
 
@@ -1319,11 +1326,13 @@ cmd_import_config() {
     fail "File not found: $input_file"
   fi
 
-  printf "\n${BOLD}Importing Claude Code config...${NC}\n"
-  if [ "$force" = true ]; then
-    printf "  ${YELLOW}Force mode: existing files will be overwritten${NC}\n"
+  if [ "$JSON_OUTPUT" != true ]; then
+    printf "\n${BOLD}Importing Claude Code config...${NC}\n"
+    if [ "$force" = true ]; then
+      printf "  ${YELLOW}Force mode: existing files will be overwritten${NC}\n"
+    fi
+    printf "\n"
   fi
-  printf "\n"
 
   # Create temp dir for inspection
   local tmp_dir
@@ -1406,9 +1415,9 @@ case "${1:-}" in
   sync)          shift; cmd_sync "$@" ;;
   status)        cmd_status ;;
   restore)       shift; cmd_restore "$@" ;;
-  peek)          cmd_peek "${2:-}" ;;
+  peek)          shift; cmd_peek "${1:-}" ;;
   uninstall)     cmd_uninstall ;;
-  export-config) cmd_export_config "${2:-}" ;;
+  export-config) shift; cmd_export_config "${1:-}" ;;
   import-config) shift; cmd_import_config "$@" ;;
   --help|-h)     show_help ;;
   --version|-v)
