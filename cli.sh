@@ -63,15 +63,17 @@ show_help() {
   cat <<EOF
 ${BOLD}Claude Backup${NC} v$VERSION
 
-Back up your Claude Code environment to a private GitHub repo.
+Back up your Claude Code environment (local or to a private GitHub repo).
 
 ${BOLD}Usage:${NC}
   claude-backup                Interactive first-time setup
   claude-backup init           Same as above
+  claude-backup init --local   Force local-only mode (no GitHub)
   claude-backup sync           Backup config + sessions
   claude-backup sync --config-only    Config only (fast)
   claude-backup sync --sessions-only  Sessions only
   claude-backup status         Show backup status
+  claude-backup peek <uuid>    Preview a session's contents
   claude-backup export-config  Export config as portable tarball
   claude-backup import-config FILE  Import config on new machine
   claude-backup restore --list              List all backed-up sessions
@@ -84,8 +86,12 @@ ${BOLD}Usage:${NC}
   claude-backup --help         Show this help
   claude-backup --version      Show version
 
+${BOLD}Global flags:${NC}
+  --json     Output structured JSON (for scripts and agents)
+  --local    Force local-only mode during init (no GitHub required)
+
 ${BOLD}Requirements:${NC}
-  git, gh (GitHub CLI, authenticated), gzip, macOS
+  git, gzip, macOS. GitHub CLI (gh) optional — enables remote backup.
 
 ${BOLD}More info:${NC}
   https://github.com/tombelieber/claude-backup
