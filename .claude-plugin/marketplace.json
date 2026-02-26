@@ -1,0 +1,9 @@
+{
+  "plugins": [
+    {
+      "name": "claude-backup",
+      "version": "3.1.0",
+      "description": "Back up and restore your Claude Code environment"
+    }
+  ]
+}
