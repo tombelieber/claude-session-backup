@@ -22,6 +22,7 @@ Claude Backup provides two-tier protection for your Claude Code environment:
 - **macOS** (Linux coming soon)
 - **git**
 - **gzip** (built-in on macOS)
+- **python3** (built-in on macOS since Catalina)
 - **gh** ([GitHub CLI](https://cli.github.com)) — *optional*. Enables remote backup to GitHub. Without it, backups are local-only.
 
 ## Commands

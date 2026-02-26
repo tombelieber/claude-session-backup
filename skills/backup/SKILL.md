@@ -15,8 +15,11 @@ Always pass `--json` to get structured output. Never parse human-readable output
 
 | Intent | Command |
 |--------|---------|
+| Initialize backup | `claude-backup init --json` |
+| Initialize (local only) | `claude-backup init --local --json` |
 | Run a backup | `claude-backup sync --json` |
 | Backup config only | `claude-backup sync --config-only --json` |
+| Backup sessions only | `claude-backup sync --sessions-only --json` |
 | Check backup status | `claude-backup status --json` |
 | List all sessions | `claude-backup restore --list --json` |
 | List recent N sessions | `claude-backup restore --last N --json` |
@@ -27,6 +30,7 @@ Always pass `--json` to get structured output. Never parse human-readable output
 | Restore (overwrite) | `claude-backup restore UUID --force --json` |
 | Export config tarball | `claude-backup export-config --json` |
 | Import config tarball | `claude-backup import-config FILE --json` |
+| Uninstall scheduler | `claude-backup uninstall` |
 
 ## Reading responses
 
@@ -34,6 +38,7 @@ Always pass `--json` to get structured output. Never parse human-readable output
 - Error: `{"error": "message"}` on stderr with exit code 1
 - `status` response includes `"mode": "github"` or `"mode": "local"`
 - Summarize results conversationally for the user. Don't dump raw JSON.
+- Pass `--local` during `init` to force local-only mode (no GitHub required)
 
 ## Helping users find sessions
 

@@ -18,12 +18,12 @@ check() {
 }
 
 # Subcommands (from case statement in cli.sh)
-for cmd in sync status restore peek export-config import-config; do
+for cmd in init sync status restore peek export-config import-config uninstall; do
   check "subcommand" "$cmd" "$SKILL"
 done
 
 # Flags (from arg parsers in cli.sh)
-for flag in --json --config-only --list --last --date --project --force; do
+for flag in --json --config-only --sessions-only --list --last --date --project --force --local; do
   check "flag" "$flag" "$SKILL"
 done
 

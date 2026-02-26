@@ -58,6 +58,7 @@ fail() {
 step() { if [ "$JSON_OUTPUT" != true ]; then printf "  ${DIM}%s${NC} " "$*"; fi; }
 json_out() { if [ "$JSON_OUTPUT" = true ]; then printf '%s\n' "$1"; fi; }
 json_err() { if [ "$JSON_OUTPUT" = true ]; then printf '%s\n' "$1" >&2; fi; }
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g'; }
 
 show_help() {
   cat <<EOF
@@ -91,7 +92,7 @@ ${BOLD}Global flags:${NC}
   --local    Force local-only mode during init (no GitHub required)
 
 ${BOLD}Requirements:${NC}
-  git, gzip, macOS. GitHub CLI (gh) optional — enables remote backup.
+  git, gzip, python3, macOS. GitHub CLI (gh) optional — enables remote backup.
 
 ${BOLD}More info:${NC}
   https://github.com/tombelieber/claude-backup
@@ -112,6 +113,14 @@ check_core_requirements() {
 
   step "gzip"
   if command -v gzip &>/dev/null; then
+    printf "${GREEN}✓${NC}\n"
+  else
+    printf "${RED}✗ not found${NC}\n"
+    ok=false
+  fi
+
+  step "python3"
+  if command -v python3 &>/dev/null; then
     printf "${GREEN}✓${NC}\n"
   else
     printf "${RED}✗ not found${NC}\n"
@@ -696,7 +705,8 @@ cmd_sync() {
   local mode="${BACKUP_MODE:-$(read_backup_mode)}"
   if [ "$mode" = "github" ]; then
     step "Pushing to GitHub..."
-    if ! git push -u origin HEAD -q 2>&1; then
+    local push_output
+    if ! push_output=$(git push -u origin HEAD -q 2>&1); then
       if [ "$JSON_OUTPUT" != true ]; then printf "${RED}FAILED${NC}\n"; fi
       warn "Push failed. Check your GitHub authentication and network."
       log "Push failed"
@@ -1001,7 +1011,7 @@ cmd_restore() {
   mkdir -p "$target_dir"
   gzip -dkc "$gz_file" > "$target_file"
   if [ "$JSON_OUTPUT" = true ]; then
-    printf '{"ok":true,"restored":{"from":"%s","to":"%s"}}\n' "$gz_file" "$target_file"
+    printf '{"ok":true,"restored":{"from":"%s","to":"%s"}}\n' "$(json_escape "$gz_file")" "$(json_escape "$target_file")"
   else
     info "Session restored: $target_file"
     printf "\n"
@@ -1049,6 +1059,7 @@ cmd_peek() {
   backed_up_at=$(date -u -r "$gz_file" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "unknown")
 
   # Parse JSONL with python3
+  local peek_exit=0
   local peek_json
   peek_json=$(python3 - "$gz_file" <<'PYEOF'
 import json, sys, gzip
@@ -1103,7 +1114,7 @@ def extract_text(entry):
                       if isinstance(b, dict) and b.get("type") == "text"), "")
     else:
         text = ""
-    return role, text[:80].replace("\n", " ").replace('"', '\\"')
+    return role, text[:80].replace("\n", " ")
 
 count = len(deduped)
 first = [extract_text(r) for r in deduped[:2]]
@@ -1121,9 +1132,9 @@ result = {
 }
 print(json.dumps(result))
 PYEOF
-  )
+  ) || peek_exit=$?
 
-  if [ $? -ne 0 ] || [ -z "$peek_json" ]; then
+  if [ "$peek_exit" -ne 0 ] || [ -z "$peek_json" ]; then
     fail "Failed to parse session file"
   fi
 
@@ -1278,7 +1289,7 @@ cmd_export_config() {
   size=$(du -h "$output_file" 2>/dev/null | cut -f1 | tr -d ' ')
 
   if [ "$JSON_OUTPUT" = true ]; then
-    printf '{"ok":true,"exported":{"path":"%s","size":"%s","files":%s}}\n' "$output_file" "$size" "$exported"
+    printf '{"ok":true,"exported":{"path":"%s","size":"%s","files":%s}}\n' "$(json_escape "$output_file")" "$(json_escape "$size")" "$exported"
   else
     printf "\n${GREEN}${BOLD}Exported${NC} to ${BOLD}${output_file}${NC} (${size})\n"
     printf "${DIM}Transfer via AirDrop, USB, or email. Import with:${NC}\n"
