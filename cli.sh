@@ -254,6 +254,68 @@ GITIGNORE
   printf "    claude-backup restore ID  Restore a session\n"
   printf "\n"
 }
+
+# stdout contract: prints a single integer (count of files synced) — always capture with config_count=$(sync_config)
+sync_config() {
+  local config_added=0
+
+  mkdir -p "$CONFIG_DEST"
+
+  for item in "${CONFIG_ITEMS[@]}"; do
+    local src="$CLAUDE_DIR/$item"
+
+    # Skip if source doesn't exist
+    [ -e "$src" ] || continue
+
+    # Top-level security check: skip sensitive top-level items
+    local skip=false
+    for pattern in "${SENSITIVE_PATTERNS[@]}"; do
+      if [[ "$item" == *"$pattern"* ]]; then
+        skip=true
+        break
+      fi
+    done
+    [ "$skip" = true ] && continue
+
+    local dest="$CONFIG_DEST/$item"
+
+    if [ -d "$src" ]; then
+      # Directory: rsync-like copy (only changed files)
+      mkdir -p "$dest"
+      while IFS= read -r -d '' file; do
+        local rel="${file#$src/}"
+        local dest_file="$dest/$rel"
+        mkdir -p "$(dirname "$dest_file")"
+
+        # Per-file sensitive check: a file inside agents/ or skills/ could be named .credentials.json
+        local file_basename
+        file_basename=$(basename "$file")
+        local file_skip=false
+        for pattern in "${SENSITIVE_PATTERNS[@]}"; do
+          if [[ "$file_basename" == *"$pattern"* ]]; then
+            file_skip=true
+            break
+          fi
+        done
+        [ "$file_skip" = true ] && continue
+
+        if [ ! -f "$dest_file" ] || [ "$file" -nt "$dest_file" ]; then
+          cp "$file" "$dest_file"
+          ((config_added++)) || true
+        fi
+      done < <(find "$src" -type f -print0 2>/dev/null)
+    else
+      # Single file: copy if newer
+      if [ ! -f "$dest" ] || [ "$src" -nt "$dest" ]; then
+        cp "$src" "$dest"
+        ((config_added++)) || true
+      fi
+    fi
+  done
+
+  echo "$config_added"
+}
+
 cmd_sync() {
   # Prevent concurrent sync operations (atomic via mkdir)
   local lock_dir="$BACKUP_DIR/.sync.lock"
