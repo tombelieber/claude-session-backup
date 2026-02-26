@@ -669,12 +669,96 @@ cmd_uninstall() {
   printf "${DIM}Delete manually: gh repo delete $DATA_REPO_NAME${NC}\n\n"
 }
 
+cmd_export_config() {
+  local output_file="${1:-}"
+  local timestamp
+  timestamp=$(date '+%Y-%m-%d')
+
+  if [ -z "$output_file" ]; then
+    output_file="$HOME/claude-config-${timestamp}.tar.gz"
+  fi
+
+  printf "\n${BOLD}Exporting Claude Code config...${NC}\n\n"
+
+  # Create temp dir for export
+  local tmp_dir
+  tmp_dir=$(mktemp -d)
+  trap 'rm -rf "$tmp_dir"' RETURN
+
+  local exported=0
+
+  for item in "${CONFIG_ITEMS[@]}"; do
+    local src="$CLAUDE_DIR/$item"
+    [ -e "$src" ] || continue
+
+    if [ -d "$src" ]; then
+      # Use filtered per-file copy (same logic as sync_config) — cp -R would bypass sensitive-file checks
+      while IFS= read -r -d '' file; do
+        local file_basename
+        file_basename=$(basename "$file")
+        local file_skip=false
+        for pattern in "${SENSITIVE_PATTERNS[@]}"; do
+          if [[ "$file_basename" == *"$pattern"* ]]; then
+            file_skip=true
+            break
+          fi
+        done
+        [ "$file_skip" = true ] && continue
+        local rel="${file#$src/}"
+        mkdir -p "$tmp_dir/$item/$(dirname "$rel")"
+        cp "$file" "$tmp_dir/$item/$rel"
+      done < <(find "$src" -type f -print0 2>/dev/null)
+    else
+      cp "$src" "$tmp_dir/$item"
+    fi
+    ((exported++)) || true
+
+    # Print what's included
+    if [ -d "$src" ]; then
+      local count
+      count=$(find "$src" -type f 2>/dev/null | wc -l | tr -d ' ')
+      info "$item/ ($count files)"
+    else
+      info "$item"
+    fi
+  done
+
+  if [ "$exported" -eq 0 ]; then
+    warn "No config files found to export"
+    return 1
+  fi
+
+  # Security scan: warn if any file contains sensitive patterns
+  local sensitive_found=false
+  while IFS= read -r -d '' file; do
+    if grep -qiE '(token|secret|password|api.?key)' "$file" 2>/dev/null; then
+      local rel="${file#$tmp_dir/}"
+      warn "Potentially sensitive content in: $rel"
+      sensitive_found=true
+    fi
+  done < <(find "$tmp_dir" -type f -print0 2>/dev/null)
+
+  if [ "$sensitive_found" = true ]; then
+    printf "\n  ${YELLOW}Review the files above before sharing this export.${NC}\n"
+  fi
+
+  # Create tarball
+  tar -czf "$output_file" -C "$tmp_dir" .
+  local size
+  size=$(du -h "$output_file" 2>/dev/null | cut -f1 | tr -d ' ')
+
+  printf "\n${GREEN}${BOLD}Exported${NC} to ${BOLD}${output_file}${NC} (${size})\n"
+  printf "${DIM}Transfer via AirDrop, USB, or email. Import with:${NC}\n"
+  printf "  claude-backup import-config ${output_file}\n\n"
+}
+
 case "${1:-}" in
   init|"")       cmd_init ;;
   sync)          shift; cmd_sync "$@" ;;
   status)        cmd_status ;;
   restore)       cmd_restore "${2:-}" ;;
   uninstall)     cmd_uninstall ;;
+  export-config) cmd_export_config "${2:-}" ;;
   --help|-h)     show_help ;;
   --version|-v)  echo "claude-backup v$VERSION" ;;
   *)             echo "Unknown command: $1"; show_help; exit 1 ;;
