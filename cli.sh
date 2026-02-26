@@ -63,7 +63,12 @@ ${BOLD}Usage:${NC}
   claude-backup status         Show backup status
   claude-backup export-config  Export config as portable tarball
   claude-backup import-config FILE  Import config on new machine
-  claude-backup restore ID     Restore a session by UUID
+  claude-backup restore --list              List all backed-up sessions
+  claude-backup restore --last N            List last N sessions
+  claude-backup restore --date YYYY-MM-DD   Sessions from date (UTC)
+  claude-backup restore --project NAME      Filter by project name
+  claude-backup restore <uuid>              Restore a session
+  claude-backup restore <uuid> --force      Overwrite existing session
   claude-backup uninstall      Remove scheduler and optionally data
   claude-backup --help         Show this help
   claude-backup --version      Show version
@@ -260,7 +265,7 @@ GITIGNORE
   printf "    claude-backup sync            Run backup now\n"
   printf "    claude-backup status           Check last backup\n"
   printf "    claude-backup export-config    Export config for sharing\n"
-  printf "    claude-backup restore ID       Restore a session\n"
+  printf "    claude-backup restore --list   List and restore sessions\n"
   printf "\n"
 }
 
@@ -647,6 +652,14 @@ cmd_status() {
     local backup_size
     backup_size=$(du -sh "$DEST_DIR" 2>/dev/null | cut -f1)
     printf "  ${BOLD}Backup size:${NC} $backup_size (compressed)\n"
+  fi
+
+  # Session index
+  local index_file="$BACKUP_DIR/session-index.json"
+  if [ -f "$index_file" ]; then
+    local index_count
+    index_count=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('sessions',[])))" "$index_file" 2>/dev/null || echo "?")
+    printf "  ${BOLD}Index:${NC}       $index_count sessions indexed\n"
   fi
 
   # Config backup
