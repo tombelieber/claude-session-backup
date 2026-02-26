@@ -1,0 +1,8 @@
+pre-commit:
+  commands:
+    skill-sync:
+      run: bash test/skill-sync.sh
+      glob: "{cli.sh,skills/backup/SKILL.md,.claude-plugin/plugin.json,package.json}"
+    bash-syntax:
+      run: bash -n cli.sh
+      glob: "cli.sh"

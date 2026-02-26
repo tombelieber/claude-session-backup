@@ -51,6 +51,12 @@
   },
   "author": "tombelieber",
   "license": "MIT",
+  "scripts": {
+    "prepare": "lefthook install || true"
+  },
+  "devDependencies": {
+    "lefthook": "^1.11.0"
+  },
   "engines": {
     "node": ">=16"
   }
