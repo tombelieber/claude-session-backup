@@ -170,6 +170,10 @@ gh repo delete claude-backup-data
 - Cloud backup backends
 - Session encryption (age)
 
+## Related
+
+- **[claude-view](https://github.com/tombelieber/claude-view)** — Mission Control for all your Claude Code sessions. `npx claude-view`
+
 ## License
 
 [MIT](LICENSE)

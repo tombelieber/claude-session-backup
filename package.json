@@ -1,7 +1,7 @@
 {
   "name": "claude-backup",
   "version": "3.0.0",
-  "description": "Back up your Claude Code environment to GitHub",
+  "description": "Back up your entire Claude Code environment to GitHub — config, sessions, daily auto-sync, machine migration",
   "bin": {
     "claude-backup": "cli.sh"
   },
@@ -13,9 +13,18 @@
   "keywords": [
     "claude",
     "claude-code",
+    "ai",
     "backup",
+    "sync",
+    "cli",
+    "anthropic",
+    "developer-tools",
+    "github",
+    "automation",
+    "config",
     "sessions",
-    "chat-history"
+    "migration",
+    "devops"
   ],
   "repository": {
     "type": "git",
