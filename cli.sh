@@ -70,6 +70,7 @@ ${BOLD}Usage:${NC}
   claude-backup                Interactive first-time setup
   claude-backup init           Same as above
   claude-backup init --local   Force local-only mode (no GitHub)
+  claude-backup init --backend <mode>  Set backend (github|git|local)
   claude-backup sync           Backup config + sessions
   claude-backup sync --config-only    Config only (fast)
   claude-backup sync --sessions-only  Sessions only
@@ -91,8 +92,9 @@ ${BOLD}Usage:${NC}
   claude-backup --version      Show version
 
 ${BOLD}Global flags:${NC}
-  --json     Output structured JSON (for scripts and agents)
-  --local    Force local-only mode during init (no GitHub required)
+  --json             Output structured JSON (for scripts and agents)
+  --backend <mode>   Set backend during init (github|git|local)
+  --local            Alias for --backend local
 
 ${BOLD}Requirements:${NC}
   git, gzip, python3, macOS. GitHub CLI (gh) optional — enables remote backup.
@@ -198,6 +200,9 @@ PLIST
     <integer>3600</integer>
 PLIST
       ;;
+    *)
+      fail "Unknown frequency: $frequency"
+      ;;
   esac
 
   cat <<PLIST
@@ -258,10 +263,32 @@ cmd_init() {
   check_core_requirements
   if [ "$JSON_OUTPUT" != true ]; then printf "\n"; fi
 
-  # Determine mode
+  # Determine mode: --backend flag > --local flag > auto-detect
   local BACKUP_MODE
   GH_USER=""
-  if [ "$FORCE_LOCAL" = true ]; then
+  if [ -n "$FORCE_BACKEND" ]; then
+    case "$FORCE_BACKEND" in
+      local)
+        BACKUP_MODE="local"
+        info "Local-only mode (--backend local)"
+        ;;
+      github)
+        if ! detect_github_available; then
+          fail "GitHub mode requires gh CLI. Install from https://cli.github.com"
+        fi
+        BACKUP_MODE="github"
+        step "gh"
+        if [ "$JSON_OUTPUT" != true ]; then printf "${GREEN}✓${NC} ${DIM}(logged in as ${GH_USER})${NC}\n"; fi
+        ;;
+      git)
+        BACKUP_MODE="git"
+        info "Custom git mode (configure remote with: claude-backup backend set git --remote URL)"
+        ;;
+      *)
+        fail "Unknown backend: $FORCE_BACKEND. Use: local, github, or git"
+        ;;
+    esac
+  elif [ "$FORCE_LOCAL" = true ]; then
     BACKUP_MODE="local"
     info "Local-only mode (--local flag)"
   elif detect_github_available; then
@@ -308,7 +335,7 @@ cmd_init() {
 
   if [ ! -d ".git" ]; then
     git init -q -b main
-    if [ "$BACKUP_MODE" != "local" ]; then
+    if [ "$BACKUP_MODE" = "github" ]; then
       git remote add origin "https://github.com/$GH_USER/$DATA_REPO_NAME.git"
     fi
   fi
@@ -421,7 +448,7 @@ dir_bytes() {
   find "$1" -type f -exec stat -f %z {} + 2>/dev/null | awk '{s+=$1}END{print s+0}'
 }
 
-# Reads mode from manifest.json. Returns "github" or "local".
+# Reads mode from manifest.json. Returns "github", "git", or "local".
 # Falls back to "github" for pre-3.1 installs that have no mode field.
 read_backup_mode() {
   local manifest="$BACKUP_DIR/manifest.json"
@@ -492,7 +519,11 @@ json.dump(m, open(path, 'w'), indent=2)
     DEST_DIR="$BACKUP_DIR/machines/$slug/projects"
 
     # 5. Commit the migration
-    (cd "$BACKUP_DIR" && git add machines/ manifest.json && git commit -q -m "migrate: namespace projects under machines/$slug")
+    (
+      cd "$BACKUP_DIR"
+      git add machines/ manifest.json
+      git commit -q -m "migrate: namespace projects under machines/$slug"
+    )
 
     log "Migrated to machine-namespaced layout: machines/$slug/"
     info "Migrated backup layout to machine-namespaced directories"
@@ -523,6 +554,12 @@ write_manifest() {
   # Resolve mode: BACKUP_MODE env (set during init) > existing manifest > "github" default
   local mode="${BACKUP_MODE:-$(read_backup_mode)}"
 
+  # Preserve schedule field from existing manifest (cmd_schedule writes it directly)
+  local schedule=""
+  if [ -f "$BACKUP_DIR/manifest.json" ]; then
+    schedule=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('schedule',''))" "$BACKUP_DIR/manifest.json" 2>/dev/null || echo "")
+  fi
+
   # Extract username from git remote URL (no network call — works offline)
   local cached_user="local"
   if [ "$mode" != "local" ]; then
@@ -543,6 +580,7 @@ write_manifest() {
 {
   "version": "$VERSION",
   "mode": "$mode",
+  "schedule": "$schedule",
   "machine": "$machine_name",
   "machineSlug": "$slug",
   "user": "$cached_user",
@@ -591,6 +629,7 @@ print(json.dumps(entries))
 {
   "version": "$VERSION",
   "mode": "$mode",
+  "schedule": "$schedule",
   "machine": "$machine_name",
   "machineSlug": "$slug",
   "user": "$cached_user",
@@ -709,7 +748,8 @@ elif mode == "project":
     sessions = [s for s in sessions if arg.lower() in s.get("projectHash", "").lower()]
 
 for s in sessions:
-    print(f"{s['uuid']}|{s['projectHash']}|{s['sizeBytes']}|{s['backedUpAt']}")
+    machine = s.get('machine', '')
+    print(f"{s['uuid']}|{s['projectHash']}|{s['sizeBytes']}|{s['backedUpAt']}|{machine}")
 PYEOF
 }
 
@@ -892,7 +932,13 @@ cmd_sync() {
   local mode="${BACKUP_MODE:-$(read_backup_mode)}"
   if [ "$mode" != "local" ]; then
     # Pull before push to handle concurrent multi-machine updates
-    git pull --rebase -q 2>/dev/null || true
+    if ! git pull --rebase -q 2>/dev/null; then
+      # Rebase conflict — abort and retry with merge strategy
+      git rebase --abort 2>/dev/null || true
+      if ! git pull -q 2>/dev/null; then
+        warn "Pull failed. Pushing may fail if remote has diverged."
+      fi
+    fi
 
     step "Pushing to remote..."
     local push_output
@@ -1000,7 +1046,16 @@ cmd_status() {
 
   # Scheduler status
   if launchctl list "$SERVICE_LABEL" &>/dev/null; then
-    printf "  ${BOLD}Scheduler:${NC}   ${GREEN}active${NC} (daily at 3:00 AM)\n"
+    local sched_freq
+    sched_freq=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('schedule','daily'))" "$BACKUP_DIR/manifest.json" 2>/dev/null || echo "daily")
+    local sched_label
+    case "$sched_freq" in
+      daily)  sched_label="daily at 3:00 AM" ;;
+      6h)     sched_label="every 6 hours" ;;
+      hourly) sched_label="every hour" ;;
+      *)      sched_label="$sched_freq" ;;
+    esac
+    printf "  ${BOLD}Scheduler:${NC}   ${GREEN}active${NC} ($sched_label)\n"
   else
     printf "  ${BOLD}Scheduler:${NC}   ${YELLOW}inactive${NC}\n"
   fi
@@ -1061,17 +1116,22 @@ cmd_status_json() {
     scheduler="active"
   fi
 
+  local schedule_freq=""
+  if [ -f "$BACKUP_DIR/manifest.json" ]; then
+    schedule_freq=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('schedule',''))" "$BACKUP_DIR/manifest.json" 2>/dev/null || echo "")
+  fi
+
   local index_sessions=0
   local index_file="$BACKUP_DIR/session-index.json"
   if [ -f "$index_file" ]; then
     index_sessions=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('sessions',[])))" "$index_file" 2>/dev/null || echo "0")
   fi
 
-  printf '{"version":"%s","mode":"%s","repo":%s,"lastBackup":"%s","backupSize":"%s","machine":"%s","machineSlug":"%s","config":{"files":%s,"size":"%s"},"sessions":{"files":%s,"projects":%s,"size":"%s"},"scheduler":"%s","index":{"sessions":%s}}\n' \
+  printf '{"version":"%s","mode":"%s","repo":%s,"lastBackup":"%s","backupSize":"%s","machine":"%s","machineSlug":"%s","config":{"files":%s,"size":"%s"},"sessions":{"files":%s,"projects":%s,"size":"%s"},"scheduler":"%s","schedule":"%s","index":{"sessions":%s}}\n' \
     "$VERSION" "$mode" "$repo" "$last_backup" "$backup_size" \
     "$(json_escape "$(hostname)")" "$(json_escape "$(get_machine_slug)")" \
     "$config_files" "$config_size" "$session_files" "$session_projects" "$session_size" \
-    "$scheduler" "$index_sessions"
+    "$scheduler" "$schedule_freq" "$index_sessions"
 }
 
 cmd_restore_all() {
@@ -1155,7 +1215,10 @@ cmd_restore() {
                  [[ "$filter_project" == --* ]] && fail "Missing value for --project" ;;
       --all)     mode="all" ;;
       --machine) ((i++)) || true; filter_machine="${args[$i]:-}"
-                 [ -z "$filter_machine" ] && fail "Missing value for --machine" ;;
+                 [ -z "$filter_machine" ] && fail "Missing value for --machine"
+                 if [[ "$filter_machine" == *"/"* ]] || [[ "$filter_machine" == *".."* ]]; then
+                   fail "Invalid machine name: $filter_machine"
+                 fi ;;
       *)         [ "$mode" = "uuid" ] && uuid="${args[$i]}" ;;
     esac
     ((i++)) || true
@@ -1185,13 +1248,13 @@ cmd_restore() {
       # Build JSON array from pipe-delimited output
       local json_sessions="["
       local first_entry=true
-      while IFS='|' read -r s_uuid s_hash s_size s_date; do
+      while IFS='|' read -r s_uuid s_hash s_size s_date s_machine; do
         if [ "$first_entry" = true ]; then
           first_entry=false
         else
           json_sessions="${json_sessions},"
         fi
-        json_sessions="${json_sessions}{\"uuid\":\"${s_uuid}\",\"projectHash\":\"${s_hash}\",\"sizeBytes\":${s_size},\"backedUpAt\":\"${s_date}\"}"
+        json_sessions="${json_sessions}{\"uuid\":\"${s_uuid}\",\"projectHash\":\"${s_hash}\",\"sizeBytes\":${s_size},\"backedUpAt\":\"${s_date}\",\"machine\":\"${s_machine}\"}"
       done < <(query_session_index "$query_mode" "$query_arg")
       json_sessions="${json_sessions}]"
       printf '{"sessions":%s}\n' "$json_sessions"
@@ -1204,7 +1267,7 @@ cmd_restore() {
       "------------------------------------" "------" "----------"
 
     local shown=0
-    while IFS='|' read -r s_uuid s_hash s_size s_date; do
+    while IFS='|' read -r s_uuid s_hash s_size s_date s_machine; do
       local display_hash display_size display_date
       if [ ${#s_hash} -gt 38 ]; then
         display_hash="...${s_hash: -35}"
@@ -1413,7 +1476,7 @@ cmd_backend() {
       ;;
   esac
 
-  # Update mode in manifest
+  # Update mode in root manifest
   python3 -c "
 import json, sys
 path = sys.argv[1]
@@ -1422,6 +1485,19 @@ m = json.load(open(path))
 m['mode'] = mode
 json.dump(m, open(path, 'w'), indent=2)
 " "$BACKUP_DIR/manifest.json" "$target_mode"
+
+  # Also update per-machine manifest
+  local per_machine_manifest="$BACKUP_DIR/machines/$(get_machine_slug)/manifest.json"
+  if [ -f "$per_machine_manifest" ]; then
+    python3 -c "
+import json, sys
+path = sys.argv[1]
+mode = sys.argv[2]
+m = json.load(open(path))
+m['mode'] = mode
+json.dump(m, open(path, 'w'), indent=2)
+" "$per_machine_manifest" "$target_mode"
+  fi
 
   info "Backend set to: $target_mode"
 
@@ -1465,7 +1541,7 @@ cmd_schedule() {
     rm -f "$PLIST_PATH"
     info "Automatic backups disabled."
 
-    # Update manifest
+    # Update root manifest
     python3 -c "
 import json, sys
 path = sys.argv[1]
@@ -1473,6 +1549,18 @@ m = json.load(open(path))
 m['schedule'] = 'off'
 json.dump(m, open(path, 'w'), indent=2)
 " "$BACKUP_DIR/manifest.json"
+
+    # Also update per-machine manifest
+    local per_machine_manifest="$BACKUP_DIR/machines/$(get_machine_slug)/manifest.json"
+    if [ -f "$per_machine_manifest" ]; then
+      python3 -c "
+import json, sys
+path = sys.argv[1]
+m = json.load(open(path))
+m['schedule'] = 'off'
+json.dump(m, open(path, 'w'), indent=2)
+" "$per_machine_manifest"
+    fi
 
     if [ "$JSON_OUTPUT" = true ]; then
       printf '{"ok":true,"schedule":"off"}\n'
@@ -1508,7 +1596,7 @@ json.dump(m, open(path, 'w'), indent=2)
     warn "Schedule registered but agent not running. Check: launchctl print $service_target"
   fi
 
-  # Store frequency in manifest
+  # Store frequency in root manifest
   python3 -c "
 import json, sys
 path = sys.argv[1]
@@ -1517,6 +1605,19 @@ m = json.load(open(path))
 m['schedule'] = freq
 json.dump(m, open(path, 'w'), indent=2)
 " "$BACKUP_DIR/manifest.json" "$frequency"
+
+  # Also update per-machine manifest
+  local per_machine_manifest="$BACKUP_DIR/machines/$(get_machine_slug)/manifest.json"
+  if [ -f "$per_machine_manifest" ]; then
+    python3 -c "
+import json, sys
+path = sys.argv[1]
+freq = sys.argv[2]
+m = json.load(open(path))
+m['schedule'] = freq
+json.dump(m, open(path, 'w'), indent=2)
+" "$per_machine_manifest" "$frequency"
+  fi
 
   local freq_label
   case "$frequency" in
@@ -1913,12 +2014,20 @@ cmd_import_config() {
 # Pre-parse global flags before subcommand dispatch
 JSON_OUTPUT=false
 FORCE_LOCAL=false
+FORCE_BACKEND=""
 FILTERED_ARGS=()
+SKIP_NEXT=false
 for arg in "$@"; do
+  if [ "$SKIP_NEXT" = true ]; then
+    FORCE_BACKEND="$arg"
+    SKIP_NEXT=false
+    continue
+  fi
   case "$arg" in
-    --json)  JSON_OUTPUT=true ;;
-    --local) FORCE_LOCAL=true ;;
-    *)       FILTERED_ARGS+=("$arg") ;;
+    --json)    JSON_OUTPUT=true ;;
+    --local)   FORCE_LOCAL=true ;;
+    --backend) SKIP_NEXT=true ;;
+    *)         FILTERED_ARGS+=("$arg") ;;
   esac
 done
 set -- "${FILTERED_ARGS[@]+"${FILTERED_ARGS[@]}"}"

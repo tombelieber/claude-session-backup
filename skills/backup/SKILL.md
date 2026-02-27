@@ -17,6 +17,7 @@ Always pass `--json` to get structured output. Never parse human-readable output
 |--------|---------|
 | Initialize backup | `claude-backup init --json` |
 | Initialize (local only) | `claude-backup init --local --json` |
+| Initialize with backend | `claude-backup init --backend <github\|git\|local> --json` |
 | Run a backup | `claude-backup sync --json` |
 | Backup config only | `claude-backup sync --config-only --json` |
 | Backup sessions only | `claude-backup sync --sessions-only --json` |
@@ -34,6 +35,7 @@ Always pass `--json` to get structured output. Never parse human-readable output
 | Switch to custom remote | `claude-backup backend set git --remote URL --json` |
 | Set backup schedule | `claude-backup schedule <off\|daily\|6h\|hourly> --json` |
 | Restore all sessions | `claude-backup restore --all --json` |
+| Restore all (overwrite) | `claude-backup restore --all --force --json` |
 | Restore from machine | `claude-backup restore --all --machine SLUG --json` |
 | Uninstall scheduler | `claude-backup uninstall` |
 
@@ -41,9 +43,9 @@ Always pass `--json` to get structured output. Never parse human-readable output
 
 - Success: `{"ok": true, …}` with exit code 0
 - Error: `{"error": "message"}` on stderr with exit code 1
-- `status` response includes `"mode": "github"`, `"mode": "git"`, or `"mode": "local"`, plus `"machine"` and `"machineSlug"` fields
+- `status` response includes `"mode": "github"`, `"mode": "git"`, or `"mode": "local"`, plus `"machine"`, `"machineSlug"`, and `"schedule"` fields
 - Summarize results conversationally for the user. Don't dump raw JSON.
-- Pass `--local` during `init` to force local-only mode (no GitHub required)
+- Pass `--backend <mode>` during `init` to set backend (github, git, local). `--local` is kept as alias for `--backend local`
 
 ## Helping users find sessions
 

@@ -1,7 +1,7 @@
 # Backup Experience Design: iCloud/WhatsApp Model
 
 **Date:** 2026-02-27
-**Status:** Draft
+**Status:** Implemented (CLI scope)
 **Target Version:** 3.2.0
 **Scope:** Cross-product — covers claude-backup CLI, claude-view dashboard, relay server, mobile app
 **Depends on:** v3.1 (JSON output, local mode, peek — shipped in v3.1.0)
@@ -192,6 +192,7 @@ The command must:
 2. **Standardize the launchd service label.** Today, `PLIST_NAME="com.claude-backup.plist"` is used as both the filename AND the `<Label>` key inside the plist. The `.plist` suffix in the label is non-standard — launchd labels should not include file extensions. v3.2 must split these:
    - `SERVICE_LABEL="com.claude-backup"` — the launchd label (used in bootout/bootstrap/print)
    - `PLIST_PATH="$HOME/Library/LaunchAgents/com.claude-backup.plist"` — the file path
+   - **Remove** the `PLIST_NAME` global variable declaration (it is fully superseded by `SERVICE_LABEL` and `PLIST_PATH`)
    - Update all three consumers of `PLIST_NAME` to use `SERVICE_LABEL`: `cmd_status()`, `cmd_status_json()`, and `cmd_uninstall()` (which also needs `bootout` instead of the deprecated `unload`)
 
 3. **Follow the full launchctl lifecycle** (critical — plist changes are NOT picked up automatically):
@@ -467,7 +468,12 @@ What the relay server stores per user (for mobile status display):
 }
 ```
 
-> **Field mapping from `status --json`:** The relay consumes the CLI's `status --json` response directly. Field names match: `version` (not `cliVersion`), `mode` (mapped to `backendMode`), `machine` (mapped to `machineName`). The relay performs these renames at ingestion time.
+> **Field mapping:** The relay ingests backup metadata from two sources:
+>
+> - **`manifest.json` (primary for numeric fields):** `sessions.sizeBytes` → `backupSizeBytes`, `sessions.files` → `sessionCount`, `sessions.projects` → `projectCount`, `config.files` → `configFileCount`. These are already integer values — no parsing needed.
+> - **`status --json` (primary for string fields):** `version` → `version`, `mode` → `backendMode`, `machine` → `machineName`. The relay performs these renames at ingestion time.
+>
+> **Why not `status --json` for everything:** `cmd_status_json()` emits human-readable sizes (`"380M"`, `"48K"`) for `backupSize`, `config.size`, and `sessions.size` — these are `du -sh` output, not raw bytes. The relay needs integer bytes for storage tracking and quota math. Rather than parsing `"380M"` → `399769600`, the relay reads `manifest.json` directly for numeric fields (which already contain `sizeBytes` as integers).
 
 **How it gets there:** After every `claude-backup sync`, if the user is authenticated with the relay, the CLI (or claude-view) posts this metadata. The session data itself never leaves the user's machine/GitHub.
 
@@ -600,7 +606,7 @@ json.dump(m, open(path, 'w'), indent=2)
 >
 > Since the migration commits atomically (`git add -A && git commit`), a partial failure before the commit means `git checkout -- .` restores the pre-migration state. A failure after commit means `git revert HEAD` undoes the migration cleanly.
 
-**`write_manifest()` changes:** v3.2 adds the `machineSlug` field and changes the write target:
+**`write_manifest()` changes:** v3.2 adds the `machineSlug` field and changes the write target. **The function must `mkdir -p "$BACKUP_DIR/machines/$slug"` before writing** — this handles both fresh installs (where no machine directory exists yet) and the upgrade path (where `migrate_to_namespaced()` has already created it; `mkdir -p` is a no-op in that case).
 
 1. **Primary write:** `$BACKUP_DIR/machines/$slug/manifest.json` — per-machine manifest. Contains all existing fields (`version`, `machine`, `user`, `lastSync`, `config`, `sessions`) plus the new `machineSlug` field. This is the source of truth for this machine.
 
@@ -615,7 +621,7 @@ json.dump(m, open(path, 'w'), indent=2)
      "user": "tombelieber",
      "lastSync": "2026-02-27T03:00:00Z",
      "config": { "files": 12, "sizeBytes": 49152 },
-     "sessions": { "files": 247, "projects": 15, "sizeBytes": 399769600 },
+     "sessions": { "files": 247, "projects": 15, "sizeBytes": 399769600, "uncompressedBytes": 1073741824 },
      "machines": [
        {
          "slug": "macbook-pro-work",
@@ -880,3 +886,21 @@ Initial adversarial score: 92/100. Five stale-text issues found; all resolved be
 | 76 | Changelog #56 retained stale `origin HEAD` after being superseded by #66 | Minor | Added "(corrected from `origin HEAD` in #66)" to entry #56 |
 | 77 | Changelog #37 retained stale "< v3.1" threshold after #63 changed it to v3.0 | Minor | Added "(corrected from `< v3.1` in #63)" to entry #37 |
 | 78 | Data source section says "Before v3.1" / "After v3.1" but v3.0 already has `--json` | Minor | Changed to "Before v3.0 (legacy fallback)" / "v3.0+ (current)" |
+
+### Round 10 (Adversarial Review)
+
+Initial adversarial score: 96/100. Two issues found; all resolved below.
+
+| # | Issue | Severity | Fix |
+| --- | --- | --- | --- |
+| 79 | `write_manifest()` spec omits `mkdir -p` for fresh installs — machine directory does not exist on a brand-new v3.2 install | Important | Added `mkdir -p "$BACKUP_DIR/machines/$slug"` requirement to `write_manifest()` spec, with note that it handles both fresh installs and upgrades |
+| 80 | Root manifest schema example omits `uncompressedBytes` field that exists in current `write_manifest()` output | Minor | Added `"uncompressedBytes": 1073741824` to schema example to match cli.sh |
+
+### Round 11 (Adversarial Review)
+
+Initial adversarial score: 95/100. Two issues found; all resolved below.
+
+| # | Issue | Severity | Fix |
+| --- | --- | --- | --- |
+| 81 | Relay field mapping says "consumes `status --json` directly" but `backupSizeBytes` needs integer bytes while `status --json` emits human-readable strings (`"380M"`) — type-incompatible | Critical | Rewrote field mapping: relay reads `manifest.json` directly for numeric fields (`sizeBytes` integers), uses `status --json` only for string fields (`version`, `mode`, `machine`). Documented why and the two-source approach |
+| 82 | `PLIST_NAME` global variable removal not specified — spec updates 3 consumer call sites but never says to remove the declaration, leaving it dangling | Important | Added explicit "Remove the `PLIST_NAME` global variable declaration" instruction before the consumer update list |
