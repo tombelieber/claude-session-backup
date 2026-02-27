@@ -1,6 +1,6 @@
 {
   "name": "claude-backup",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "Claude Code deletes your sessions after 30 days. Save them — config, chat history, daily auto-sync, machine migration. One command: npx claude-backup",
   "bin": {
     "claude-backup": "cli.sh"
@@ -45,6 +45,10 @@
     "hooks",
     "skills"
   ],
+  "homepage": "https://github.com/tombelieber/claude-backup#readme",
+  "bugs": {
+    "url": "https://github.com/tombelieber/claude-backup/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tombelieber/claude-backup.git"
