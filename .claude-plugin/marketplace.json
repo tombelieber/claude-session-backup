@@ -7,8 +7,7 @@
     {
       "name": "claude-backup",
       "source": "./",
-      "description": "Back up and restore your Claude Code environment",
-      "version": "3.2.1"
+      "description": "Back up and restore your Claude Code environment"
     }
   ]
 }

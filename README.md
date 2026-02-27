@@ -192,7 +192,7 @@ Let Claude manage backups for you:
 
 ```bash
 /plugin marketplace add tombelieber/claude-backup
-/plugin install claude-backup
+/plugin install claude-backup@claude-backup
 ```
 
 The plugin teaches Claude the CLI commands. The agent always uses `--json` for structured output.
