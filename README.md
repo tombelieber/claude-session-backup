@@ -55,7 +55,7 @@ Interactive setup:
 1. Checks requirements (git, gzip, python3)
 2. Creates a private GitHub repo (or local-only if you prefer)
 3. Backs up your config and all sessions (gzipped)
-4. Schedules daily automatic backups (3:00 AM)
+4. Sets up automatic backups (configurable: daily, 6h, hourly)
 
 That's it. Run it once, forget about it.
 
@@ -134,19 +134,55 @@ Plugins are not included in the export (they are re-downloaded on first launch).
 
 ---
 
-## Local-Only Mode
+## Backend Modes
 
-No GitHub account? No problem. Backups stay on your machine.
+Choose where your backups live:
 
 ```bash
-# Automatic: if gh is not installed, local mode is used
+# GitHub private repo (default if gh is installed)
 npx claude-backup
 
-# Explicit: force local mode even if gh is available
+# Local only — no remote, no GitHub needed
 npx claude-backup --local
+
+# Custom git remote
+npx claude-backup --backend git
+claude-backup backend set git --remote git@myserver:backups.git
+```
+
+Switch backends anytime — even after setup:
+
+```bash
+claude-backup backend set github   # switch to GitHub
+claude-backup backend set local    # switch to local-only
+claude-backup backend set git --remote <url>  # custom remote
 ```
 
 Backups go to `~/.claude-backup/` as a local git repo. Everything works the same — sync, restore, peek, export/import.
+
+---
+
+## Backup Schedule
+
+Control how often backups run:
+
+```bash
+claude-backup schedule daily    # Every day at 3:00 AM (default)
+claude-backup schedule 6h       # Every 6 hours
+claude-backup schedule hourly   # Every hour
+claude-backup schedule off      # Disable automatic backups
+```
+
+---
+
+## Restore Everything
+
+Restore all sessions at once — useful for a fresh machine or disaster recovery:
+
+```bash
+claude-backup restore --all             # restore every session
+claude-backup restore --all --force     # overwrite existing sessions
+```
 
 ---
 
@@ -184,9 +220,14 @@ The plugin teaches Claude the CLI commands. The agent always uses `--json` for s
 | `claude-backup restore --project NAME` | Filter by project name |
 | `claude-backup restore <uuid>` | Restore a specific session |
 | `claude-backup restore <uuid> --force` | Overwrite existing session |
+| `claude-backup restore --all` | Restore all sessions at once |
+| `claude-backup restore --all --force` | Restore all, overwrite existing |
+| `claude-backup backend set <mode>` | Switch backend (github, git, local) |
+| `claude-backup schedule <freq>` | Set frequency (off, daily, 6h, hourly) |
 | `claude-backup uninstall` | Remove scheduler and optionally delete data |
 | `claude-backup <any> --json` | Structured JSON output (for scripts/agents) |
 | `claude-backup init --local` | Force local-only mode (no GitHub) |
+| `claude-backup init --backend <mode>` | Set backend during init |
 
 </details>
 
@@ -223,30 +264,36 @@ The plugin teaches Claude the CLI commands. The agent always uses `--json` for s
 <br>
 
 ```text
-~/.claude-backup/                   # Git repo -> private GitHub repo
-├── manifest.json                   # Backup metadata (version, timestamp, machine)
-├── config/                         # Config profile
-│   ├── settings.json
-│   ├── settings.local.json
-│   ├── CLAUDE.md
-│   ├── agents/
-│   ├── hooks/
-│   ├── skills/
-│   └── rules/
-├── session-index.json              # Auto-generated, gitignored
-├── projects/                       # Sessions (gzipped)
-│   ├── -Users-foo-myproject/
-│   │   ├── session-abc.jsonl.gz
-│   │   └── sessions-index.json
-│   └── ...
-└── history.jsonl.gz                # Command history (gzipped)
+~/.claude-backup/                         # Git repo -> private GitHub repo
+├── manifest.json                         # Root manifest (aggregates all machines)
+├── machines/
+│   └── <machine-slug>/                   # Per-machine namespace
+│       ├── manifest.json                 # Machine-specific metadata
+│       ├── config/                       # Config profile
+│       │   ├── settings.json
+│       │   ├── settings.local.json
+│       │   ├── CLAUDE.md
+│       │   ├── agents/
+│       │   ├── hooks/
+│       │   ├── skills/
+│       │   └── rules/
+│       ├── session-index.json            # Auto-generated, gitignored
+│       ├── projects/                     # Sessions (gzipped)
+│       │   ├── -Users-foo-myproject/
+│       │   │   ├── session-abc.jsonl.gz
+│       │   │   └── sessions-index.json
+│       │   └── ...
+│       └── history.jsonl.gz             # Command history (gzipped)
+└── ...                                   # Other machines
 ```
+
+Sessions are namespaced by machine — backups from multiple devices stay organized and searchable. Existing v3.1 backups are auto-migrated on first sync.
 
 | Location | Contents |
 | --- | --- |
 | `~/.claude-backup/` | Local compressed backups + git repo |
 | `github.com/<you>/claude-backup-data` | Remote private repo |
-| `~/Library/LaunchAgents/com.claude-backup.plist` | macOS scheduler (daily 3:00 AM) |
+| `~/Library/LaunchAgents/com.claude-backup.plist` | macOS scheduler |
 
 </details>
 
