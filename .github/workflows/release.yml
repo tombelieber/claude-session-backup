@@ -22,17 +22,26 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Verify version matches tag
+      - name: Verify all versions match tag
         env:
           TAG_REF: ${{ github.ref_name }}
         run: |
           TAG_VERSION="${TAG_REF#v}"
           PKG_VERSION=$(node -p "require('./package.json').version")
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::Tag version ($TAG_VERSION) != package.json version ($PKG_VERSION)"
-            exit 1
-          fi
-          echo "Version verified: $TAG_VERSION"
+          CLI_VERSION=$(sed -n 's/^VERSION="\([^"]*\)"/\1/p' cli.sh)
+          PLUGIN_VERSION=$(python3 -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
+          MKT_VERSION=$(python3 -c "import json; print(json.load(open('.claude-plugin/marketplace.json'))['plugins'][0]['version'])")
+          ERRORS=0
+          for LABEL_VER in "package.json:$PKG_VERSION" "cli.sh:$CLI_VERSION" "plugin.json:$PLUGIN_VERSION" "marketplace.json:$MKT_VERSION"; do
+            LABEL="${LABEL_VER%%:*}"
+            VER="${LABEL_VER#*:}"
+            if [ "$TAG_VERSION" != "$VER" ]; then
+              echo "::error::Tag version ($TAG_VERSION) != $LABEL version ($VER)"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          if [ "$ERRORS" -gt 0 ]; then exit 1; fi
+          echo "All 4 versions verified: $TAG_VERSION"
 
       - name: Publish
         run: npm publish --access public
