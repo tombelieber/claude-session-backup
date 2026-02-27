@@ -11,33 +11,45 @@ description: >
 You operate the `claude-backup` CLI on behalf of the user.
 Always pass `--json` to get structured output. Never parse human-readable output.
 
+## Resolving the CLI
+
+The CLI ships with this plugin. Resolve it in order:
+
+1. `bash ~/.claude/plugins/marketplaces/claude-backup/cli.sh` (plugin install)
+2. `claude-backup` (global npm install)
+
+On first invocation, try option 1. If the file doesn't exist, fall back to option 2.
+Store the working path and reuse it for the rest of the session.
+
 ## Commands
+
+All examples below use `$CLI` as placeholder. Replace with the resolved path.
 
 | Intent | Command |
 |--------|---------|
-| Initialize backup | `claude-backup init --json` |
-| Initialize (local only) | `claude-backup init --local --json` |
-| Initialize with backend | `claude-backup init --backend <github\|git\|local> --json` |
-| Run a backup | `claude-backup sync --json` |
-| Backup config only | `claude-backup sync --config-only --json` |
-| Backup sessions only | `claude-backup sync --sessions-only --json` |
-| Check backup status | `claude-backup status --json` |
-| List all sessions | `claude-backup restore --list --json` |
-| List recent N sessions | `claude-backup restore --last N --json` |
-| Find sessions by project | `claude-backup restore --project NAME --json` |
-| Find sessions by date | `claude-backup restore --date YYYY-MM-DD --json` |
-| Preview a session | `claude-backup peek UUID --json` |
-| Restore a session | `claude-backup restore UUID --json` |
-| Restore (overwrite) | `claude-backup restore UUID --force --json` |
-| Export config tarball | `claude-backup export-config --json` |
-| Import config tarball | `claude-backup import-config FILE --json` |
-| Switch backend mode | `claude-backup backend set <github\|git\|local> --json` |
-| Switch to custom remote | `claude-backup backend set git --remote URL --json` |
-| Set backup schedule | `claude-backup schedule <off\|daily\|6h\|hourly> --json` |
-| Restore all sessions | `claude-backup restore --all --json` |
-| Restore all (overwrite) | `claude-backup restore --all --force --json` |
-| Restore from machine | `claude-backup restore --all --machine SLUG --json` |
-| Uninstall scheduler | `claude-backup uninstall` |
+| Initialize backup | `$CLI init --json` |
+| Initialize (local only) | `$CLI init --local --json` |
+| Initialize with backend | `$CLI init --backend <github\|git\|local> --json` |
+| Run a backup | `$CLI sync --json` |
+| Backup config only | `$CLI sync --config-only --json` |
+| Backup sessions only | `$CLI sync --sessions-only --json` |
+| Check backup status | `$CLI status --json` |
+| List all sessions | `$CLI restore --list --json` |
+| List recent N sessions | `$CLI restore --last N --json` |
+| Find sessions by project | `$CLI restore --project NAME --json` |
+| Find sessions by date | `$CLI restore --date YYYY-MM-DD --json` |
+| Preview a session | `$CLI peek UUID --json` |
+| Restore a session | `$CLI restore UUID --json` |
+| Restore (overwrite) | `$CLI restore UUID --force --json` |
+| Export config tarball | `$CLI export-config --json` |
+| Import config tarball | `$CLI import-config FILE --json` |
+| Switch backend mode | `$CLI backend set <github\|git\|local> --json` |
+| Switch to custom remote | `$CLI backend set git --remote URL --json` |
+| Set backup schedule | `$CLI schedule <off\|daily\|6h\|hourly> --json` |
+| Restore all sessions | `$CLI restore --all --json` |
+| Restore all (overwrite) | `$CLI restore --all --force --json` |
+| Restore from machine | `$CLI restore --all --machine SLUG --json` |
+| Uninstall scheduler | `$CLI uninstall` |
 
 ## Reading responses
 

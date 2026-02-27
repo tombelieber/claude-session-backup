@@ -188,14 +188,14 @@ claude-backup restore --all --force     # overwrite existing sessions
 
 ## Claude Code Plugin
 
-Let Claude manage backups for you:
+Let Claude manage backups for you — no `npm install` needed:
 
 ```bash
-/plugin marketplace add tombelieber/claude-backup
+/plugin marketplace add https://github.com/tombelieber/claude-backup
 /plugin install claude-backup@claude-backup
 ```
 
-The plugin teaches Claude the CLI commands. The agent always uses `--json` for structured output.
+That's it. The plugin bundles the CLI — the agent runs it directly from the plugin cache. No global install, no npx, no PATH setup.
 
 ---
 
