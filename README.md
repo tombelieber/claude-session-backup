@@ -13,6 +13,13 @@
 
 </div>
 
+> [!IMPORTANT]
+> **The maintained `backup` agent skill now lives in
+> [Tomstack](https://github.com/tombelieber/tomstack/tree/main/skills/productivity/backup).**
+> Install and update the reusable skill from Tomstack. This repository remains
+> the supported home of the `claude-backup` CLI, scheduler, npm package,
+> standalone plugin, and runtime releases.
+
 Every debugging session. Every architecture decision. Every prompt you spent an hour crafting. Gone.
 
 WhatsApp keeps your messages forever. Telegram keeps them forever. Discord keeps them forever. Claude Code — the tool you pay $20–200/mo for — gives you 30 days.
@@ -188,7 +195,21 @@ claude-backup restore --all --force     # overwrite existing sessions
 
 ## Claude Code Plugin
 
-Let Claude manage backups for you — no `npm install` needed:
+For the maintained agent skill shared with Codex, install it from Tomstack:
+
+```bash
+npx skills@latest add tombelieber/tomstack --skill=backup
+```
+
+Or install the whole managed Claude skill bundle:
+
+```bash
+claude plugin marketplace add tombelieber/tomstack
+claude plugin install tomstack-skills@tomstack
+```
+
+Use this standalone product plugin when you specifically want its bundled CLI
+with no `npm install`:
 
 ```bash
 /plugin marketplace add tombelieber/claude-backup
